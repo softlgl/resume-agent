@@ -1,0 +1,22 @@
+{
+  "name": "resume-agent",
+  "version": "1.0.0",
+  "private": true,
+  "description": "全栈简历助手：填写简历信息，选择模板导出 Word/PDF",
+  "workspaces": [
+    "packages/shared",
+    "packages/server",
+    "packages/client"
+  ],
+  "scripts": {
+    "dev:server": "npm run dev --workspace=@resume-agent/server",
+    "dev:client": "npm run dev --workspace=@resume-agent/client",
+    "build": "npm run build --workspaces --if-present",
+    "db:generate": "npm run db:generate --workspace=@resume-agent/server",
+    "db:migrate": "npm run db:migrate --workspace=@resume-agent/server",
+    "db:push": "npm run db:push --workspace=@resume-agent/server"
+  },
+  "devDependencies": {
+    "fontkit": "^2.0.4"
+  }
+}

@@ -1,0 +1,22 @@
+# 换行符：仓库内统一存 LF，检出行尾由 git 自动处理
+* text=auto
+
+# Windows 批处理必须 CRLF，Shell 脚本必须 LF
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.ps1 text eol=crlf
+*.sh  text eol=lf
+
+# 二进制资源：禁止换行转换，避免文件被损坏
+*.otf  binary
+*.ttf  binary
+*.ttc  binary
+*.woff binary
+*.woff2 binary
+*.png  binary
+*.jpg  binary
+*.jpeg binary
+*.gif  binary
+*.ico  binary
+*.pdf  binary
+*.docx binary

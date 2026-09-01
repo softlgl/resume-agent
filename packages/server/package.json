@@ -1,0 +1,37 @@
+{
+  "name": "@resume-agent/server",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch --env-file=../../.env src/index.ts",
+    "build": "tsc -p tsconfig.json",
+    "start": "node --env-file=../../.env dist/index.js",
+    "db:generate": "prisma generate",
+    "db:migrate": "prisma migrate dev",
+    "db:push": "prisma db push",
+    "db:seed": "tsx --env-file=../../.env prisma/seed.ts"
+  },
+  "dependencies": {
+    "@fastify/cors": "^9.0.1",
+    "@pdf-lib/fontkit": "^1.1.1",
+    "@prisma/client": "^5.18.0",
+    "@react-pdf/renderer": "^3.4.4",
+    "@resume-agent/shared": "*",
+    "bcryptjs": "^2.4.3",
+    "docx": "^8.5.0",
+    "fastify": "^4.28.1",
+    "jsonwebtoken": "^9.0.2",
+    "pdfkit": "^0.19.1",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/bcryptjs": "^2.4.6",
+    "@types/jsonwebtoken": "^9.0.6",
+    "@types/node": "^20.14.0",
+    "@types/pdfkit": "^0.17.6",
+    "prisma": "^5.18.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.4.0"
+  }
+}

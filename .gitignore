@@ -1,0 +1,79 @@
+# ---------- 依赖 ----------
+node_modules/
+.pnp/
+.pnp.js
+.yarn/
+.pnpm-store/
+
+# ---------- 构建产物 ----------
+dist/
+build/
+out/
+.vite/
+.cache/
+.parcel-cache/
+*.tsbuildinfo
+packages/server/prisma/seed.js
+packages/server/prisma/seed.d.ts
+
+# ---------- 环境变量 ----------
+.env
+.env.local
+.env.*.local
+!.env.example
+
+# ---------- 日志 ----------
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+server.out.log
+client.out.log
+server.err
+
+# ---------- 数据库 ----------
+*.db
+*.db-journal
+*.db.bak
+*.sqlite
+*.sqlite3
+packages/server/prisma/migrations/dev.db
+
+# ---------- 测试 / 覆盖率 ----------
+coverage/
+.nyc_output/
+*.lcov
+
+# ---------- 编辑器 / IDE ----------
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.example.json
+.idea/
+*.swp
+*.swo
+*~
+
+# ---------- 操作系统 ----------
+.DS_Store
+.DS_Store?
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# ---------- 本地调试产物 ----------
+out_docx.bin
+out_pdf.bin
+*.tmp
+*.temp
+
+# 一次性调试脚本（根目录 _ 开头）
+/_*.cjs
+/_*.mjs
+
+# 本地字体资源（约 39MB，代码未直接引用，且含微软版权字体，不入库）
+packages/server/assets/fonts/
+
+# IDE / 本地工具数据
+.codebuddy/
