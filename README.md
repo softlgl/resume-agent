@@ -196,4 +196,4 @@ npm run start --workspace=@resume-agent/server  # 运行编译后的后端
 
 ## 许可证
 
-本项目当前未指定开源许可证，如需开源请自行添加 `LICENSE` 文件。
+本项目基于 [MIT License](./LICENSE) 开源。
