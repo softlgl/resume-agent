@@ -21,6 +21,8 @@
 - **实时预览**：编辑区与预览区左右分栏，预览基于与导出端完全相同的排版令牌渲染。
 - **一键导出**：导出 `.docx`；导出 `.pdf` 时优先走 DOCX → Word 转换，无 Word 环境自动降级为 PDFKit 渲染。
 - **中文排版**：内置思源黑体、宋体等字体方案，导出不乱码。
+- **AI 简历分析**：接入 OpenAI 兼容的 LLM（云端 DeepSeek/通义千问，或本地 Ollama·LM Studio·vLLM）。输出 ATS 友好度与内容质量评分、逐条问题清单（可定位跳转到对应区块并高亮）、能力雷达图与结构化总结；写作数据自动脱敏，分析结果落库、重开可回看，问题改写支持「应用到简历」，可选结合岗位 JD 做匹配分析。
+- **导入 Word/PDF**：支持导入 `.docx` / `.pdf` 简历，自动提取文本并经 LLM 识别为可编辑的结构化字段，预览逐字段确认后另存为新简历；文字型 PDF 直接抽文本，扫描版（图片型 PDF）自动走本地 RapidOCR 识别。
 
 ## 技术栈
 
@@ -29,6 +31,8 @@
 | 前端 | React 18 · React Router 6 · Zustand · React Hook Form · Tailwind CSS · Vite 5 |
 | 后端 | Fastify 4 · Prisma 5 · Zod · bcryptjs · jsonwebtoken |
 | 导出 | `docx`（DOCX 渲染）· PDFKit（PDF 降级渲染）· Word COM（DOCX → PDF） |
+| AI | OpenAI 兼容协议 · 流式输出（SSE）· 结构化 JSON Schema |
+| 导入/OCR | mammoth（docx 文本）· pdfjs-dist + @napi-rs/canvas（pdf 文本/渲染）· RapidOCR（扫描件 OCR，conda 环境） |
 | 数据 | MySQL 8 |
 | 工程 | npm workspaces 单体仓库 · TypeScript（`shared` 包被前后端共同引用） |
 
@@ -46,8 +50,10 @@ resume-agent/
 │  │  ├─ src/
 │  │  │  ├─ index.ts          # 应用入口（CORS / 插件 / 路由注册）
 │  │  │  ├─ plugins/          # prisma.ts（数据库）、auth.ts（JWT 校验钩子）
-│  │  │  ├─ modules/          # auth.ts、resume.ts、export.ts 路由
+│  │  │  ├─ modules/          # auth.ts、resume.ts、export.ts、ai.ts、import.ts 路由
+│  │  │  ├─ services/         # llm.ts、extract.ts、structurize.ts、ocripy.ts
 │  │  │  └─ export/           # docx.ts、pdf.ts 渲染实现
+│  │  ├─ scripts/             # ocr.py（RapidOCR 子进程脚本）
 │  │  ├─ assets/fonts/        # 中文字体（思源黑体、宋体）
 │  │  └─ prisma/              # schema.prisma、seed.ts
 │  └─ client/                 # React 前端
@@ -68,6 +74,8 @@ resume-agent/
 - npm **≥ 9**（需要 workspaces 支持）
 - MySQL **≥ 8**
 - Windows 导出 PDF 的最佳效果依赖本机安装 **Microsoft Word**（缺失时自动降级）
+- （可选）AI 简历分析需要一个 **OpenAI 兼容** 的 LLM 端点（默认 DeepSeek，也可用本地 Ollama / LM Studio / vLLM）；未配置时自动降级为本地硬规则检查
+- （可选）导入**扫描版** PDF 需要本机安装 **conda + RapidOCR（onnxruntime）**，首次使用会自动创建 `resume_ocr` 虚拟环境并安装依赖
 
 ### 1. 安装依赖
 
@@ -91,6 +99,12 @@ PORT=4000
 
 # 允许跨域的前端地址，多个用英文逗号分隔
 CLIENT_ORIGIN="http://localhost:5173"
+
+# --- 可选：AI 简历分析（OpenAI 兼容协议，省略则不启用 AI 分析）---
+LLM_PROVIDER="deepseek"
+LLM_BASE_URL="https://api.deepseek.com/v1"
+LLM_API_KEY="sk-xxx"
+LLM_MODEL="deepseek-chat"
 ```
 
 > `.env` 已被 `.gitignore` 忽略，请勿提交。
@@ -130,7 +144,7 @@ npm run build                                 # 构建全部子包
 npm run start --workspace=@resume-agent/server  # 运行编译后的后端
 ```
 
-前端构建产物位于 `packages/client/dist`，可交给任意静态服务器托管（需将 `/auth`、`/resumes`、`/export`、`/health` 反向代理到后端）。
+前端构建产物位于 `packages/client/dist`，可交给任意静态服务器托管（需将 `/auth`、`/resumes`、`/export`、`/ai`、`/import`、`/health` 反向代理到后端）。
 
 ## 可用脚本
 
@@ -160,6 +174,11 @@ npm run start --workspace=@resume-agent/server  # 运行编译后的后端
 | PUT | `/resumes/:id` | 更新简历，body 同上 |
 | DELETE | `/resumes/:id` | 删除简历 |
 | GET | `/export/:id/:format` | 导出文件，`format` 为 `docx` 或 `pdf` |
+| GET | `/ai/health` | LLM 是否可用 / 当前 Provider |
+| GET / POST / DELETE | `/ai/config` | 查看 / 设置 / 重置 LLM 配置（运行时覆盖 .env） |
+| POST | `/ai/analyze` | 简历分析；`streaming:true` 时返回 SSE（逐字思考过程 + 输出内容），带 `jd` 做岗位匹配，带 `resumeId` 结果落库 |
+| PATCH | `/ai/analyze/:resumeId/applied` | 把分析结果中某条建议标记为「已应用」（body：`{ section, index }`，写回 `Resume.analysis`） |
+| POST | `/import/parse` | 上传 `.docx`/`.pdf` 解析为结构化内容（multipart，≤20MB），SSE 返回识别过程 |
 
 ## 模板一览
 

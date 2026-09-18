@@ -22,6 +22,8 @@ async function authPlugin(app: FastifyInstance) {
     if (
       !request.routeOptions.url?.startsWith("/resumes") &&
       !request.routeOptions.url?.startsWith("/export") &&
+      !request.routeOptions.url?.startsWith("/ai") &&
+      !request.routeOptions.url?.startsWith("/import") &&
       !request.routeOptions.url?.startsWith("/auth/me")
     ) {
       return;

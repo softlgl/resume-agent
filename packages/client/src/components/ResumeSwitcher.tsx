@@ -2,8 +2,9 @@ import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useNavigate } from "react-router-dom";
 import { useResumeStore } from "../store/resume";
-import { ChevronDown, Plus, Trash2, FileText } from "lucide-react";
+import { ChevronDown, Plus, Trash2, FileText, Upload } from "lucide-react";
 import NewResumeDialog from "./NewResumeDialog";
+import ImportResumeDialog from "./ImportResumeDialog";
 
 // 顶部「我的简历 ▾」下拉：列表 / 切换 / 新建 / 删除
 export default function ResumeSwitcher() {
@@ -11,6 +12,7 @@ export default function ResumeSwitcher() {
   const { id, title, list, loadList, remove } = useResumeStore();
   const [open, setOpen] = useState(false);
   const [showNew, setShowNew] = useState(false);
+  const [showImport, setShowImport] = useState(false);
   const [confirmDel, setConfirmDel] = useState<string | null>(null);
   const ref = useRef<HTMLDivElement>(null);
 
@@ -108,6 +110,17 @@ export default function ResumeSwitcher() {
           >
             <Plus size={16} /> 新建简历
           </button>
+
+          {/* 导入按钮 */}
+          <button
+            onClick={() => {
+              setOpen(false);
+              setShowImport(true);
+            }}
+            className="w-full mt-1 flex items-center gap-2 px-3 py-2 rounded-lg bg-slate-100 text-slate-600 text-sm font-medium hover:bg-slate-200 transition"
+          >
+            <Upload size={16} /> 导入 Word/PDF
+          </button>
         </div>
       )}
 
@@ -140,6 +153,7 @@ export default function ResumeSwitcher() {
       )}
 
       {showNew && <NewResumeDialog onClose={() => setShowNew(false)} />}
+      {showImport && <ImportResumeDialog onClose={() => setShowImport(false)} />}
     </div>
   );
 }

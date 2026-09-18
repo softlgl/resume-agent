@@ -5,6 +5,8 @@ import authPlugin from "./plugins/auth.js";
 import { authModule } from "./modules/auth.js";
 import { resumeModule } from "./modules/resume.js";
 import { exportModule } from "./modules/export.js";
+import { aiModule } from "./modules/ai.js";
+import { importModule } from "./modules/import.js";
 
 const app = Fastify({ logger: true });
 
@@ -19,6 +21,8 @@ async function main() {
   await app.register(authModule);
   await app.register(resumeModule);
   await app.register(exportModule);
+  await app.register(aiModule);
+  await app.register(importModule);
 
   app.get("/health", async () => ({ ok: true }));
 

@@ -6,7 +6,8 @@ import Preview from "../components/Preview";
 import TemplatePicker from "../components/TemplatePicker";
 import SectionForm from "../components/SectionForm";
 import ResumeSwitcher from "../components/ResumeSwitcher";
-import { FileDown, Save, Check, LogOut, LayoutTemplate } from "lucide-react";
+import AIAnalysisPanel from "../components/AIAnalysisPanel";
+import { FileDown, Save, Check, LogOut, LayoutTemplate, Sparkles } from "lucide-react";
 import type { WorkExp, EduExp, ProjectExp, SkillGroup } from "@resume-agent/shared";
 
 export default function Editor() {
@@ -18,6 +19,7 @@ export default function Editor() {
   const [menuOpen, setMenuOpen] = useState(false);
   const [previewScale, setPreviewScale] = useState(1);
   const [previewPages, setPreviewPages] = useState(1);
+  const [aiPanelOpen, setAiPanelOpen] = useState(false);
   const exportRef = useRef<HTMLDivElement>(null);
   const previewAreaRef = useRef<HTMLDivElement>(null);
   const navigate = useNavigate();
@@ -25,6 +27,76 @@ export default function Editor() {
   const urlId = params.id;
 
   const basic = content.basic;
+
+  // ---------------------------------------------------------------------------
+  // AI 改写应用：根据 path（如 works[0].description）定位并替换 content 中对应字段
+  // ---------------------------------------------------------------------------
+  const applyByPath = useCallback((field: string, newValue: string) => {
+    if (!field) return;
+    // 解析 path：把 "works[0].description" 拆成 ["works", 0, "description"]
+    const tokens: (string | number)[] = [];
+    let buf = "";
+    for (let i = 0; i < field.length; i++) {
+      const c = field[i];
+      if (c === ".") {
+        if (buf) tokens.push(buf);
+        buf = "";
+      } else if (c === "[") {
+        if (buf) tokens.push(buf);
+        buf = "";
+      } else if (c === "]") {
+        if (buf) tokens.push(parseInt(buf, 10));
+        buf = "";
+      } else {
+        buf += c;
+      }
+    }
+    if (buf) tokens.push(buf);
+    if (tokens.length === 0) return;
+
+    const topKey = tokens[0] as keyof typeof content;
+    const rest = tokens.slice(1);
+
+    if (rest.length === 0) {
+      // 顶层字段：直接 setField
+      setField(topKey, newValue as any);
+      return;
+    }
+
+    // 否则 clone 顶层，逐层深入替换
+    const clone = structuredClone(content[topKey]);
+    // 深入到倒数第二层
+    let cur: any = clone;
+    for (let i = 0; i < rest.length - 1; i++) {
+      cur = cur[rest[i] as any];
+    }
+    // 在最后一层赋值
+    const last = rest[rest.length - 1];
+    cur[last as any] = newValue;
+
+    setField(topKey, clone as any);
+  }, [content, setField]);
+
+  // ---------------------------------------------------------------------------
+  // AI 面板点击字段定位：滚动到对应 section → 高亮闪烁（不关闭面板，用户可手动点 X 关闭）
+  // ---------------------------------------------------------------------------
+  const gotoSection = useCallback((field: string) => {
+    if (!field) return;
+    const top = field.split(/[.\[\]]+/)[0];
+    // 不自动关闭面板，保留分析结果便于连续查看/跳转
+    setTimeout(() => {
+      const el = document.getElementById(`editor-section-${top}`);
+      const scroller = document.querySelector(`section.w-1\\/2.overflow-y-auto`);
+      if (el) {
+        el.scrollIntoView({ behavior: "smooth", block: "start" });
+        // 高亮闪烁 1.5s
+        el.classList.add("ring-2", "ring-brand-400", "ring-offset-2");
+        setTimeout(() => el.classList.remove("ring-2", "ring-brand-400", "ring-offset-2"), 1500);
+      } else if (scroller) {
+        scroller.scrollIntoView({ behavior: "smooth" });
+      }
+    }, 250);
+  }, []);
 
   // 从 URL :id 加载指定简历（每次 urlId 变化都加载，保证 content 正确；store.id 持久化但 content 不持久化，刷新后需重新加载）
   useEffect(() => {
@@ -169,6 +241,12 @@ export default function Editor() {
             >
               <Save size={15} /> 保存
             </button>
+            <button
+              onClick={() => setAiPanelOpen(true)}
+              className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-gradient-to-r from-brand-600 to-purple-600 text-white text-sm hover:opacity-90 transition"
+            >
+              <Sparkles size={15} /> AI 分析
+            </button>
             <div className="relative" ref={exportRef}>
               <button
                 onClick={() => setMenuOpen((v) => !v)}
@@ -202,7 +280,7 @@ export default function Editor() {
       <div className="flex pt-16 flex-1 h-[calc(100vh-4rem)]">
         <section className="w-1/2 overflow-y-auto px-5 py-5 space-y-4">
           {/* 基本信息 */}
-          <div className="glass rounded-2xl p-4 shadow-glass">
+          <div id="editor-section-basic" className="glass rounded-2xl p-4 shadow-glass scroll-mt-20 transition">
             <h2 className="text-lg font-bold text-slate-800 mb-3">基本信息</h2>
             <div className="grid grid-cols-2 gap-2">
               {([
@@ -289,6 +367,7 @@ export default function Editor() {
 
           <SectionForm<WorkExp>
             title="工作经历"
+            sectionKey="works"
             items={content.works}
             empty={() => ({ id: "", company: "", role: "", start: "", end: "", current: false, description: "" })}
             onChange={(v) => setField("works", v)}
@@ -303,6 +382,7 @@ export default function Editor() {
           />
           <SectionForm<EduExp>
             title="教育经历"
+            sectionKey="educations"
             items={content.educations}
             empty={() => ({ id: "", school: "", major: "", degree: "", start: "", end: "", description: "" })}
             onChange={(v) => setField("educations", v)}
@@ -317,6 +397,7 @@ export default function Editor() {
           />
           <SectionForm<ProjectExp>
             title="项目经历"
+            sectionKey="projects"
             items={content.projects}
             empty={() => ({ id: "", name: "", role: "", start: "", end: "", link: "", description: "" })}
             onChange={(v) => setField("projects", v)}
@@ -331,6 +412,7 @@ export default function Editor() {
           />
           <SectionForm<SkillGroup>
             title="技能"
+            sectionKey="skills"
             items={content.skills}
             empty={() => ({ id: "", category: "", items: "" })}
             onChange={(v) => setField("skills", v)}
@@ -372,6 +454,19 @@ export default function Editor() {
           </div>
         </section>
       </div>
+
+      <AIAnalysisPanel
+        open={aiPanelOpen}
+        onClose={() => setAiPanelOpen(false)}
+        content={content}
+        resumeId={id}
+        onApply={(field, value) => {
+          applyByPath(field, value);
+          // 应用改写后自动保存（toInput 实时读 store，能拿到应用后的最新值），确保改写真正落库
+          if (!saving) save(true);
+        }}
+        onGoto={gotoSection}
+      />
     </div>
   );
 }

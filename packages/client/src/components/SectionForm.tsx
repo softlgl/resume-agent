@@ -13,6 +13,7 @@ interface FieldDef {
 
 export interface SectionFormProps<T> {
   title: string;
+  sectionKey?: string; // 用于 AI 面板点击字段跳转定位（对应字段路径顶层，如 works / projects）
   items: T[];
   fields: FieldDef[];
   empty: () => T;
@@ -22,6 +23,7 @@ export interface SectionFormProps<T> {
 
 export default function SectionForm<T extends { id: string }>({
   title,
+  sectionKey,
   items,
   fields,
   empty,
@@ -35,7 +37,7 @@ export default function SectionForm<T extends { id: string }>({
   const add = () => onChange([...items, { ...empty(), id: uid() } as T]);
 
   return (
-    <div className="glass rounded-2xl p-4 mb-4 shadow-glass">
+    <div id={sectionKey ? `editor-section-${sectionKey}` : undefined} className="glass rounded-2xl p-4 mb-4 shadow-glass scroll-mt-20 transition">
       <div className="flex items-center justify-between mb-3">
         <h2 className="text-lg font-bold text-slate-800">{title}</h2>
         <button

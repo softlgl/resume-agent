@@ -21,6 +21,7 @@ model Resume {
   title     String   @default("我的简历")
   templateId String  @default("classic")
   content   Json
+  analysis  Json?   // AI 分析结果缓存（基础分析不含 JD 匹配）
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
   user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)

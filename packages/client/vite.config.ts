@@ -11,6 +11,8 @@ export default defineConfig({
       "/auth": "http://localhost:4000",
       "/resumes": "http://localhost:4000",
       "/export": "http://localhost:4000",
+      "/ai": "http://localhost:4000",
+      "/import": "http://localhost:4000",
       "/health": "http://localhost:4000",
     },
   },

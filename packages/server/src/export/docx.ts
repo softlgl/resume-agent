@@ -278,7 +278,7 @@ function buildLayout(
 
     // 页面高度（twips）= PRINT.page.height * 20，与 Document.section.page.size.height 保持完全一致
     const pageTw = Math.round(PRINT.page.height * 20);
-    // 双栏表格行高策略：HeightRule.AT_LEAST + cellPadTB=0 + defaultFont=1pt
+    // 双栏表格行高策略：HeightRule.ATLEAST + cellPadTB=0 + defaultFont=1pt
     //  三重优化后，隐含空段总高 ≈ 3pt，仅需 reserve=120twips(6pt) 安全余量即可保证不溢出。
     //  对应空内容时 rowH = 841.9 - 6 = 835.9pt → 侧栏背景从页顶铺到距页底仅 6pt 处（≈0.2cm，肉眼不可见）。
     //  内容多时 AT_LEAST 自动撑高，Word 默认允许行跨页拆分，不裁剪、不产生末尾空白页。
@@ -288,7 +288,7 @@ function buildLayout(
       width: { size: tableTw, type: WidthType.DXA },
       columnWidths: [sideTw, mainTw],
       borders: { top: { style: BorderStyle.NONE }, bottom: { style: BorderStyle.NONE }, left: { style: BorderStyle.NONE }, right: { style: BorderStyle.NONE }, insideHorizontal: { style: BorderStyle.NONE }, insideVertical: { style: BorderStyle.NONE } },
-      rows: [new TableRow({ height: { value: rowTw, rule: HeightRule.AT_LEAST }, children: [sidebarCell, mainCell] })],
+      rows: [new TableRow({ height: { value: rowTw, rule: HeightRule.ATLEAST }, children: [sidebarCell, mainCell] })],
     });
 
     return [table];
