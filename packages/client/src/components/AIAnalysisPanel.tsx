@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
-import { Sparkles, X, AlertTriangle, AlertCircle, Lightbulb, TrendingUp, Brain, RefreshCw, Settings, Check, ChevronDown, ChevronUp, CornerDownRight, Braces } from "lucide-react";
+import { Sparkles, X, AlertTriangle, AlertCircle, Lightbulb, TrendingUp, Brain, RefreshCw, Settings, Check, CornerDownRight, Braces } from "lucide-react";
 import { api } from "../api/client";
+import ModelManager from "./ModelManager";
 
 // 前端 Issue 类型（和后端对齐）
 interface Issue {
@@ -364,59 +365,15 @@ export default function AIAnalysisPanel({ open, onClose, content, resumeId, onAp
   const [analyzeWithJd, setAnalyzeWithJd] = useState(false);
   const [llmAvailable, setLlmAvailable] = useState<boolean | null>(null);
 
-  // LLM 设置（可折叠）
+  // 模型管理已抽到全局 ModelManager 组件；这里只保留折叠开关与 llm 可用状态（供未配置警示用）
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [llmProvider, setLlmProvider] = useState<string>("ollama");
-  const [llmBaseUrl, setLlmBaseUrl] = useState("http://localhost:11434/v1");
-  const [llmModel, setLlmModel] = useState("qwen3.5:4b");
-  const [llmApiKey, setLlmApiKey] = useState("");
-  const [llmStatus, setLlmStatus] = useState<"idle" | "saving" | "saved" | "failed">("idle");
 
-  // 打开面板时拉一次后端当前配置作为初始值
+  // 打开面板时拉一次 LLM 健康状态，用于展示「未配置 AI 模型」提示
   useEffect(() => {
     if (open) {
       api.aiHealth().then((r) => setLlmAvailable(r.llmAvailable)).catch(() => {});
-      api.aiGetConfig().then((cfg) => {
-        if (cfg?.provider) setLlmProvider(cfg.provider);
-        if (cfg?.baseUrl) setLlmBaseUrl(cfg.baseUrl);
-        if (cfg?.model) setLlmModel(cfg.model);
-      }).catch(() => {});
     }
   }, [open]);
-
-  const handleSaveSettings = async () => {
-    setLlmStatus("saving");
-    try {
-      const res = await api.aiSetConfig({
-        provider: llmProvider as any,
-        baseUrl: llmBaseUrl,
-        model: llmModel,
-        apiKey: llmApiKey,
-      });
-      if (res?.available) {
-        setLlmStatus("saved");
-        setTimeout(() => setLlmStatus("idle"), 1500);
-      } else {
-        setLlmStatus("failed");
-      }
-    } catch {
-      setLlmStatus("failed");
-    }
-  };
-
-  const handleResetSettings = async () => {
-    try {
-      const res = await api.aiResetConfig();
-      if (res?.config) {
-        setLlmProvider(res.config.provider);
-        setLlmBaseUrl(res.config.baseUrl);
-        setLlmModel(res.config.model);
-      }
-      setLlmApiKey("");
-      setLlmStatus("saved");
-      setTimeout(() => setLlmStatus("idle"), 1500);
-    } catch {}
-  };
 
   useEffect(() => {
     if (open) {
@@ -519,84 +476,10 @@ export default function AIAnalysisPanel({ open, onClose, content, resumeId, onAp
             </div>
           </div>
 
-          {/* LLM 设置折叠区 */}
+          {/* LLM 设置折叠区（复用全局 ModelManager） */}
           {settingsOpen && (
-            <div className="px-5 py-3 border-b border-slate-100 bg-slate-50/60 space-y-2.5">
-              <div className="flex items-center justify-between text-xs text-slate-500">
-                <span>LLM 模型配置</span>
-                <button
-                  onClick={handleResetSettings}
-                  className="text-slate-400 hover:text-slate-600 transition"
-                >
-                  重置为 .env
-                </button>
-              </div>
-              <div className="grid grid-cols-2 gap-2">
-                <label className="text-xs text-slate-500">
-                  Provider
-                  <select
-                    value={llmProvider}
-                    onChange={(e) => setLlmProvider(e.target.value)}
-                    className="mt-1 w-full rounded-md border border-slate-200 bg-white px-2 py-1.5 text-sm"
-                  >
-                    <option value="ollama">Ollama (本地)</option>
-                    <option value="lmstudio">LM Studio (本地)</option>
-                    <option value="vllm">vLLM (本地)</option>
-                    <option value="deepseek">DeepSeek</option>
-                    <option value="doubao">豆包</option>
-                    <option value="qwen">通义千问</option>
-                    <option value="openai">OpenAI</option>
-                  </select>
-                </label>
-                <label className="text-xs text-slate-500">
-                  模型名称
-                  <input
-                    value={llmModel}
-                    onChange={(e) => setLlmModel(e.target.value)}
-                    className="mt-1 w-full rounded-md border border-slate-200 bg-white px-2 py-1.5 text-sm"
-                    placeholder="如 qwen3.5:4b"
-                  />
-                </label>
-              </div>
-              <label className="text-xs text-slate-500">
-                Base URL
-                <input
-                  value={llmBaseUrl}
-                  onChange={(e) => setLlmBaseUrl(e.target.value)}
-                  className="mt-1 w-full rounded-md border border-slate-200 bg-white px-2 py-1.5 text-sm"
-                  placeholder="http://localhost:11434/v1"
-                />
-              </label>
-              {!["ollama", "lmstudio", "vllm"].includes(llmProvider) && (
-                <label className="text-xs text-slate-500">
-                  API Key
-                  <input
-                    type="password"
-                    value={llmApiKey}
-                    onChange={(e) => setLlmApiKey(e.target.value)}
-                    className="mt-1 w-full rounded-md border border-slate-200 bg-white px-2 py-1.5 text-sm"
-                    placeholder="sk-..."
-                  />
-                </label>
-              )}
-              <div className="flex items-center gap-2 pt-1">
-                <button
-                  onClick={handleSaveSettings}
-                  disabled={llmStatus === "saving"}
-                  className="flex-1 flex items-center justify-center gap-1.5 rounded-md bg-brand-600 text-white text-sm py-1.5 hover:bg-brand-700 transition disabled:opacity-60"
-                >
-                  {llmStatus === "saving" && "保存中..."}
-                  {llmStatus === "saved" && <><Check size={14} /> 已保存</>}
-                  {llmStatus === "failed" && "保存失败"}
-                  {llmStatus === "idle" && "保存并生效"}
-                </button>
-                <button
-                  onClick={async () => { await handleSaveSettings(); runAnalyze(false); }}
-                  className="rounded-md border border-slate-200 text-slate-600 text-sm py-1.5 px-3 hover:bg-white transition"
-                >
-                  保存并分析
-                </button>
-              </div>
+            <div className="px-5 py-3 border-b border-slate-100 bg-slate-50/60 max-h-[calc(100vh-140px)] overflow-y-auto">
+              <ModelManager open />
             </div>
           )}
         </div>
@@ -632,7 +515,7 @@ export default function AIAnalysisPanel({ open, onClose, content, resumeId, onAp
 
           {/* AI 输出内容（模型的原始 JSON 全文；推理模型完成前逐字累积，结束后格式化） */}
           {outText && (
-            <details className="bg-slate-50 border border-slate-200 rounded-lg overflow-hidden" open={!loading}>
+            <details className="bg-slate-50 border border-slate-200 rounded-lg overflow-hidden">
               <summary className="flex items-center gap-1.5 px-3 py-2.5 cursor-pointer select-none text-sm text-slate-600 hover:bg-slate-100">
                 <Braces size={14} className="text-slate-400 shrink-0" />
                 <span className="font-medium">AI 输出内容</span>

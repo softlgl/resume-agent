@@ -1,5 +1,5 @@
 // LLM 封装：兼容 OpenAI / DeepSeek / 豆包 / 通义 / 本地模型（Ollama、LM Studio、vLLM 等 OpenAI 兼容协议）
-// 配置优先级：前端覆盖 > 运行时 setRuntimeConfig > .env > 默认值
+// 配置优先级：运行时 setRuntimeConfig（/ai/analyze 单次覆盖）> 激活的 profile（DB 内存快照）> .env > 默认值
 
 export type LLMProvider = "openai" | "deepseek" | "doubao" | "qwen" | "ollama" | "lmstudio" | "vllm";
 
@@ -8,24 +8,91 @@ export interface LLMConfig {
   apiKey: string; // 本地模型可能为空字符串
   baseUrl: string;
   model: string;
+  maxContext: number; // 输入上下文上限（token）
+  maxOutput: number; // 输出上限（token）
 }
 
-// 各家默认 base URL 和 model
-const DEFAULTS: Record<LLMProvider, { baseUrl: string; model: string }> = {
-  openai: { baseUrl: "https://api.openai.com/v1", model: "gpt-4o-mini" },
-  deepseek: { baseUrl: "https://api.deepseek.com/v1", model: "deepseek-chat" },
-  doubao: { baseUrl: "https://ark.cn-beijing.volces.com/api/v3", model: "doubao-pro-4k" },
-  qwen: { baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1", model: "qwen-plus" },
-  ollama: { baseUrl: "http://localhost:11434/v1", model: "qwen2.5:7b" },
-  lmstudio: { baseUrl: "http://localhost:1234/v1", model: "qwen2.5-7b" },
-  vllm: { baseUrl: "http://localhost:8000/v1", model: "qwen2.5-7b" },
+// 各家默认 base URL / model / 上下文与输出上限
+const DEFAULTS: Record<LLMProvider, { baseUrl: string; model: string; maxContext: number; maxOutput: number }> = {
+  openai: { baseUrl: "https://api.openai.com/v1", model: "gpt-4o-mini", maxContext: 128000, maxOutput: 16384 },
+  deepseek: { baseUrl: "https://api.deepseek.com/v1", model: "deepseek-chat", maxContext: 128000, maxOutput: 8192 },
+  doubao: { baseUrl: "https://ark.cn-beijing.volces.com/api/v3", model: "doubao-pro-4k", maxContext: 128000, maxOutput: 8192 },
+  qwen: { baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1", model: "qwen-plus", maxContext: 131072, maxOutput: 8192 },
+  ollama: { baseUrl: "http://localhost:11434/v1", model: "qwen2.5:7b", maxContext: 32768, maxOutput: 4096 },
+  lmstudio: { baseUrl: "http://localhost:1234/v1", model: "qwen2.5-7b", maxContext: 32768, maxOutput: 4096 },
+  vllm: { baseUrl: "http://localhost:8000/v1", model: "qwen2.5-7b", maxContext: 32768, maxOutput: 4096 },
 };
 
-let _runtimeConfig: Partial<LLMConfig> | null = null; // 运行时覆盖（前端传来）
+let _runtimeConfig: Partial<LLMConfig> | null = null; // 运行时覆盖（来自 /ai/analyze 单次请求）
 let _envConfig: LLMConfig | null | undefined; // 缓存 .env 解析结果
 
+// ---------------------------------------------------------------------------
+// 多模型（Profiles）内存快照
+// 持久化在数据库（aiModuleProfile 表，全局共享），由 ai 模块在启动与每次变更后
+// 调用 refreshProfiles() 同步内存，getLLMConfig() 只读内存，保持同步调用链。
+// ---------------------------------------------------------------------------
+
+export interface LLMProfile {
+  id: string;
+  name: string;
+  provider: LLMProvider;
+  apiKey: string; // 本地模型可能为空字符串
+  baseUrl: string;
+  model: string;
+  maxContext: number;
+  maxOutput: number;
+}
+
+let _profiles: LLMProfile[] = [];
+let _activeId: string | null = null;
+
+/** 由上层（ai 模块）从数据库刷新内存快照 */
+export function refreshProfiles(profiles: LLMProfile[], activeId: string | null) {
+  _profiles = profiles.map((p) => ({ ...p }));
+  _activeId = activeId;
+}
+
+export function listProfiles(): { profiles: LLMProfile[]; activeId: string | null } {
+  return { profiles: _profiles.map((p) => ({ ...p })), activeId: _activeId };
+}
+
+/** 返回 provider 的默认 baseUrl / model，供持久化前兜底 */
+export function defaultsFor(provider: LLMProvider): { baseUrl: string; model: string } {
+  return DEFAULTS[provider];
+}
+
+function mergeAndValidate(base: LLMConfig): LLMConfig | null {
+  // 基础配置 + 重新算默认 baseUrl / model / 上限
+  const merged: LLMConfig = {
+    provider: base.provider,
+    apiKey: base.apiKey ?? "",
+    baseUrl: base.baseUrl || DEFAULTS[base.provider].baseUrl,
+    model: base.model || DEFAULTS[base.provider].model,
+    maxContext: Math.max(1, base.maxContext || DEFAULTS[base.provider].maxContext),
+    maxOutput: Math.max(1, base.maxOutput || DEFAULTS[base.provider].maxOutput),
+  };
+  // 云端需要 apiKey（本地模型可空）
+  const isLocal = merged.provider === "ollama" || merged.provider === "lmstudio" || merged.provider === "vllm";
+  if (!isLocal && !merged.apiKey) return null;
+  return merged;
+}
+
+/**
+ * 按 provider 构建 response_format。
+ * - openai：支持结构化输出 json_schema。
+ * - 其他云端（deepseek/doubao/qwen）：只支持 json_object（deepseek 用 json_schema 会报 400）。
+ * - 本地模型：不支持该字段，由调用方走行内 JSON 提示。
+ */
+function buildResponseFormat(provider: LLMProvider, jsonSchema?: Record<string, unknown>) {
+  if (!jsonSchema) return undefined;
+  if (provider === "openai") {
+    return { type: "json_schema", json_schema: { name: "resume_analysis", schema: jsonSchema, strict: true } };
+  }
+  return { type: "json_object" as const };
+}
+
 export function getLLMConfig(): LLMConfig | null {
-  // 先算 .env 基础配置
+  // 惰性解析 .env
   if (_envConfig === undefined) {
     const provider = (process.env.LLM_PROVIDER || "deepseek") as LLMProvider;
     const apiKey = process.env.LLM_API_KEY?.trim();
@@ -35,37 +102,39 @@ export function getLLMConfig(): LLMConfig | null {
     if (!isLocal && !apiKey) {
       _envConfig = null;
     } else {
-      _envConfig = { provider, apiKey: apiKey ?? "", baseUrl, model };
+      _envConfig = {
+        provider,
+        apiKey: apiKey ?? "",
+        baseUrl,
+        model,
+        maxContext: DEFAULTS[provider].maxContext,
+        maxOutput: DEFAULTS[provider].maxOutput,
+      };
     }
   }
-  // 运行时覆盖 > .env
-  const base = _runtimeConfig
-    ? { ..._envConfig, ..._runtimeConfig } as LLMConfig
-    : _envConfig;
-  if (!base) return null;
-  // 运行时覆盖可能改了 provider，重新算默认 baseUrl / model
-  const merged: LLMConfig = {
-    provider: base.provider,
-    apiKey: base.apiKey ?? "",
-    baseUrl: base.baseUrl || DEFAULTS[base.provider].baseUrl,
-    model: base.model || DEFAULTS[base.provider].model,
-  };
-  // 云端需要 apiKey（运行时覆盖也强制检查）
-  const isLocal = merged.provider === "ollama" || merged.provider === "lmstudio" || merged.provider === "vllm";
-  if (!isLocal && !merged.apiKey) return null;
-  return merged;
+  // 1) 运行时覆盖（/ai/analyze 单次请求）最高优先；若不可用则继续往下
+  if (_runtimeConfig) {
+    const cfg = mergeAndValidate({ ..._envConfig, ..._runtimeConfig } as LLMConfig);
+    if (cfg) return cfg;
+  }
+  // 2) 激活的 profile（DB 内存快照）优先于 .env
+  const active = _profiles.find((p) => p.id === _activeId);
+  if (active) return mergeAndValidate(active);
+  // 3) 回退 .env（未配置则 null）
+  if (!_envConfig) return null;
+  return mergeAndValidate(_envConfig);
 }
 
 export function isLLMAvailable(): boolean {
   return getLLMConfig() !== null;
 }
 
-/** 设置运行时覆盖配置（来自前端面板） */
+/** 设置运行时覆盖配置（仅 /ai/analyze 单次覆盖使用，不落库） */
 export function setRuntimeConfig(partial: Partial<LLMConfig> | null) {
   _runtimeConfig = partial;
 }
 
-/** 重置为仅使用 .env */
+/** 清空运行时覆盖 */
 export function resetRuntimeConfig() {
   _runtimeConfig = null;
 }
@@ -75,7 +144,7 @@ export function getDefaultConfig(): LLMConfig {
   const cfg = getLLMConfig();
   if (!cfg) {
     // 返回一个 ollama 预设让前端有东西可展示
-    return { provider: "ollama", apiKey: "", baseUrl: DEFAULTS.ollama.baseUrl, model: DEFAULTS.ollama.model };
+    return { provider: "ollama", apiKey: "", baseUrl: DEFAULTS.ollama.baseUrl, model: DEFAULTS.ollama.model, maxContext: DEFAULTS.ollama.maxContext, maxOutput: DEFAULTS.ollama.maxOutput };
   }
   return cfg;
 }
@@ -111,14 +180,12 @@ export async function chat(
     messages,
     temperature: opts.temperature ?? 0.3,
   };
-  body.max_tokens = opts.maxTokens ?? DEFAULT_MAX_TOKENS;
+  // 以 profile.maxOutput 作为真实上限收敛：调用方给的再大也被 clamp 到该模型输出上限
+  body.max_tokens = Math.min(opts.maxTokens ?? DEFAULT_MAX_TOKENS, cfg.maxOutput);
 
   if (opts.jsonSchema) {
     if (!isLocal) {
-      body.response_format = {
-        type: "json_schema",
-        json_schema: { name: "resume_analysis", schema: opts.jsonSchema, strict: true },
-      };
+      body.response_format = buildResponseFormat(cfg.provider, opts.jsonSchema);
     } else {
       body.messages = [
         { role: "system", content: "你必须严格输出 JSON，不要加任何其他文字、解释或 markdown 代码块。" },
@@ -188,15 +255,13 @@ export async function chatStream(
     temperature: opts.temperature ?? 0.3,
   };
   // 流式 + 推理模型 reasoning 占用 token，给足 maxTokens 避免 JSON 被截断
-  body.max_tokens = opts.maxTokens ?? 6000;
+  // 同时以 profile.maxOutput 作为真实上限收敛，避免超过各家硬上限
+  body.max_tokens = Math.min(opts.maxTokens ?? 6000, cfg.maxOutput);
   body.stream = true;
 
   if (opts.jsonSchema) {
     if (!isLocal) {
-      body.response_format = {
-        type: "json_schema",
-        json_schema: { name: "resume_analysis", schema: opts.jsonSchema, strict: true },
-      };
+      body.response_format = buildResponseFormat(cfg.provider, opts.jsonSchema);
     } else {
       body.messages = [
         { role: "system", content: "你必须严格输出 JSON，不要加任何其他文字、解释或 markdown 代码块。" },

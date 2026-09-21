@@ -1,7 +1,19 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import type { ResumeContent } from "@resume-agent/shared";
-import { chat, chatStream, parseJSON, isLLMAvailable, setRuntimeConfig, resetRuntimeConfig, getDefaultConfig } from "../services/llm.js";
+import {
+  chat,
+  chatStream,
+  parseJSON,
+  isLLMAvailable,
+  setRuntimeConfig,
+  getDefaultConfig,
+  listProfiles,
+  refreshProfiles,
+  defaultsFor,
+} from "../services/llm.js";
+import type { LLMProfile, LLMConfig, LLMProvider } from "../services/llm.js";
+import type { PrismaClient } from "@prisma/client";
 
 // ---------------------------------------------------------------------------
 // 类型定义（前后端共用，后续可搬到 shared 包）
@@ -218,13 +230,19 @@ rewrite 是可选字段，只在"可以从现有内容推理出改写结果"时�
 - 涉及主观判断（如"建议把项目移到最前面"——这是排序建议，不能用 rewrite 实现）
 → 只给 problem（问题描述）+ suggestion（操作建议），**不要填 rewrite**
 
+**field 定位规则（同样非常重要）**：
+- field 必须精确到某一个**字符串字段**，且路径里数组必须带下标，如 basic.summary、works[0].description、projects[2].description、skills[0].items。
+- **禁止把整段 section 名（works/projects/educations/skills/basic，不带下标）当作 field**，也禁止给这类整段字段配 rewrite。整段是数组/对象，前端无法用一段纯文本覆盖；能重写的是段内的具体字符串字段。
+- 若要改写某条经历的描述，field 必须是 works[0].description 这种带下标的路径，rewrite 才是那条描述的新文本。
+- 数组或对象本身的增删（如「新增一段经历」）应写成 problem + suggestion，不给 rewrite、也不把整段名当 field。
+
 评分标准：
 - 0-40 分：明显不足
 - 40-70 分：基本合格但有明显短板
 - 70-90 分：较好
 - 90-100 分：优秀
 
-field 字段要用 JSON 路径格式，如 basic.summary、works[0].description、projects[1].tech、skills。`;
+field 字段要用 JSON 路径格式，精确到字符串字段且数组带下标，如 basic.summary、works[0].description、projects[1].description；不要输出不带下标的整段名（如 skills）。`;
 }
 
 // 敏感字段脱敏：发送给 LLM 前替换为占位符，避免真实个人隐私外泄
@@ -308,13 +326,14 @@ async function llmAnalyze(content: ResumeContent, jd?: string, onReasoning?: (de
 
   // 本地累积思考过程原文，随结果一起落库，供缓存命中时回看
   let reasoningTxt = "";
-  // 流式 + 推理模型 reasoning 占 token，maxTokens 给足避免 JSON 截断
+  // 思考与正文共享预算；给足够大的上限，让真实卡点收敛到 profile.maxOutput（用户按模型配），
+  // 避免写死小值盖掉配置导致思考耗光后 JSON 被截断。
   const text = await chatStream(
     [
       { role: "system", content: buildSystemPrompt() },
       { role: "user", content: buildUserPrompt(content, jd) },
     ],
-    { jsonSchema: ANALYSIS_SCHEMA, temperature: 0.3, maxTokens: 6000 },
+    { jsonSchema: ANALYSIS_SCHEMA, temperature: 0.3, maxTokens: 262144 },
     (d) => {
       reasoningTxt += d;
       onReasoning?.(d);
@@ -407,6 +426,12 @@ async function llmAnalyze(content: ResumeContent, jd?: string, onReasoning?: (de
       sections[key] = sections[key].map((it) => {
         if (!it.rewrite) return it;
         if (NO_REWRITE_PATTERNS.some((re) => re.test(it.field))) {
+          return { ...it, rewrite: undefined };
+        }
+        // 整段容器字段（field 不含下标 [ 或字段路径 .，如 "works"/"projects"/"skills"/"basic"）：
+        // 这些顶层值是数组/对象，rewrite 是纯文本，一旦应用会把容器覆写成字符串导致前端崩溃。
+        // 若 AI 想重写整条，应给出带下标的字段（如 works[0].description）；否则只给建议、不给 rewrite。
+        if (!/[\[\.]/.test(it.field)) {
           return { ...it, rewrite: undefined };
         }
         return it;
@@ -564,43 +589,224 @@ const analyzeBodySchema = z.object({
   force: z.boolean().optional(),
 });
 
+function maskApiKey(key: string): string {
+  if (!key) return "";
+  if (key.length <= 8) return `${key.slice(0, 2)}***${key.slice(-2)}`;
+  return `${key.slice(0, 4)}***${key.slice(-4)}`;
+}
+
+/** 从数据库读取模型配置并刷新 llm 模块内存快照（全局共享，无 userId） */
+async function syncProfiles(prisma: PrismaClient) {
+  // 首次启动且尚无任何模型记录时，把 .env/默认值种入一条默认模型并置为激活，
+  // 保证前端模型列表始终有可见、可用的默认模型（后续仍可正常编辑/删除/新增）
+  const count = await prisma.aiModelProfile.count();
+  if (count === 0) {
+    const seed = getDefaultConfig();
+    await prisma.aiModelProfile.create({
+      data: {
+        name: "默认模型",
+        provider: seed.provider,
+        apiKey: seed.apiKey,
+        baseUrl: seed.baseUrl,
+        model: seed.model,
+        maxContext: seed.maxContext,
+        maxOutput: seed.maxOutput,
+        active: true,
+      },
+    });
+  }
+  const rows = await prisma.aiModelProfile.findMany({ orderBy: { createdAt: "asc" } });
+  const profiles: LLMProfile[] = rows.map((r) => ({
+    id: r.id,
+    name: r.name,
+    provider: r.provider as LLMProfile["provider"],
+    apiKey: r.apiKey,
+    baseUrl: r.baseUrl,
+    model: r.model,
+    maxContext: r.maxContext,
+    maxOutput: r.maxOutput,
+  }));
+  refreshProfiles(profiles, rows.find((r) => r.active)?.id ?? null);
+}
+
+function buildConfigPayload(profiles: LLMProfile[], activeId: string | null, cfg: LLMConfig) {
+  return {
+    profiles: profiles.map((p) => ({
+      id: p.id,
+      name: p.name,
+      provider: p.provider,
+      baseUrl: p.baseUrl,
+      model: p.model,
+      maxContext: p.maxContext,
+      maxOutput: p.maxOutput,
+      apiKeyMasked: maskApiKey(p.apiKey),
+      active: p.id === activeId,
+    })),
+    activeId,
+    // 当前生效配置摘要（可能来自 .env 或激活的 profile）
+    config: {
+      provider: cfg.provider,
+      baseUrl: cfg.baseUrl,
+      model: cfg.model,
+      apiKeyMasked: maskApiKey(cfg.apiKey),
+    },
+    available: isLLMAvailable(),
+  };
+}
+
+/** 记录一次 AI 调用日志（保留全部历史，前端只展示最新一条） */
+async function recordCall(
+  prisma: PrismaClient,
+  userId: string,
+  result: ResumeAnalysis,
+  opts: { kind?: "analyze" | "import"; resumeId?: string | null } = {}
+) {
+  try {
+    const cfg = getDefaultConfig();
+    await prisma.llmCallLog.create({
+      data: {
+        userId,
+        kind: opts.kind ?? "analyze",
+        resumeId: opts.resumeId ?? null,
+        provider: cfg.provider,
+        model: cfg.model,
+        ok: true,
+        reasoning: result.reasoning ?? null,
+        output: result.output ?? null,
+      },
+    });
+  } catch (err) {
+    console.error("[AI] 记录调用日志失败:", err);
+  }
+}
+
 export async function aiModule(app: FastifyInstance) {
+  // 启动时从数据库加载模型配置到内存快照
+  await syncProfiles(app.prisma);
+
+  // 最近一次 AI 调用日志（供前端展示，数据保留全量历史）
+  app.get("/ai/calls/latest", async (request, reply) => {
+    if (!request.userId) return reply.code(401).send({ error: "未登录" });
+    const row = await app.prisma.llmCallLog.findFirst({
+      where: { userId: request.userId },
+      orderBy: { createdAt: "desc" },
+    });
+    if (!row) return { call: null };
+    return {
+      call: {
+        id: row.id,
+        kind: row.kind,
+        resumeId: row.resumeId,
+        provider: row.provider,
+        model: row.model,
+        ok: row.ok,
+        reasoning: row.reasoning,
+        output: row.output,
+        createdAt: row.createdAt.toISOString(),
+      },
+    };
+  });
+
   // 健康检查
   app.get("/ai/health", async () => ({
     llmAvailable: isLLMAvailable(),
     config: getDefaultConfig(),
   }));
 
-  // 获取当前生效的 LLM 配置（前端初始化设置面板）
+  // 获取配置列表（模型 profiles + 当前激活）+ 当前生效配置摘要（前端初始化设置面板）
   app.get("/ai/config", async () => {
-    const cfg = getDefaultConfig();
-    return {
-      provider: cfg.provider,
-      baseUrl: cfg.baseUrl,
-      model: cfg.model,
-      apiKeyMasked: cfg.apiKey ? `${cfg.apiKey.slice(0, 4)}***${cfg.apiKey.slice(-4)}` : "",
-    };
+    await syncProfiles(app.prisma);
+    const { profiles, activeId } = listProfiles();
+    return buildConfigPayload(profiles, activeId, getDefaultConfig());
   });
 
-  // 设置运行时 LLM 配置（覆盖 .env）
+  // 增删改选模型 profile：body { action: 'add'|'update'|'remove'|'setActive'|'clear', ... }
   app.post("/ai/config", async (request, reply) => {
     if (!request.userId) return reply.code(401).send({ error: "未登录" });
-    const body = request.body as any;
-    const partial: Partial<typeof setRuntimeConfig extends (p: infer P) => void ? P : never> = {};
-    if (body?.provider) partial.provider = body.provider;
-    if (body?.baseUrl) partial.baseUrl = body.baseUrl;
-    if (body?.model) partial.model = body.model;
-    if (body?.apiKey !== undefined) partial.apiKey = body.apiKey;
-    setRuntimeConfig(partial as any);
-    const cfg = getDefaultConfig();
-    return { ok: true, config: cfg, available: isLLMAvailable() };
+    const body = (request.body ?? {}) as any;
+    const action = typeof body?.action === "string" ? body.action : "add";
+    const prisma = app.prisma;
+    switch (action) {
+      case "add": {
+        if (!body?.provider) return reply.code(400).send({ error: "provider 必填" });
+        const provider = body.provider as LLMProvider;
+        const def = defaultsFor(provider);
+        const count = await prisma.aiModelProfile.count();
+        await prisma.aiModelProfile.create({
+          data: {
+            name: body.name?.trim() || (body.model?.trim() ? `${provider} · ${body.model.trim()}` : provider),
+            provider,
+            apiKey: body.apiKey ?? "",
+            baseUrl: body.baseUrl?.trim() || def.baseUrl,
+            model: body.model?.trim() || def.model,
+            maxContext: body.maxContext ?? def.maxContext,
+            maxOutput: body.maxOutput ?? def.maxOutput,
+            active: count === 0, // 第一条自动激活
+          },
+        });
+        break;
+      }
+      case "update": {
+        if (!body?.id) return reply.code(400).send({ error: "id 必填" });
+        const t = await prisma.aiModelProfile.findUnique({ where: { id: body.id } });
+        if (!t) return reply.code(404).send({ error: "模型不存在" });
+        const provider = (body.provider as LLMProvider) || (t.provider as LLMProvider);
+        const def = defaultsFor(provider);
+        await prisma.aiModelProfile.update({
+          where: { id: body.id },
+          data: {
+            name: body.name?.trim() || t.name,
+            provider,
+            apiKey: body.apiKey !== undefined ? body.apiKey : t.apiKey,
+            baseUrl: body.baseUrl?.trim() || (body.baseUrl !== undefined ? def.baseUrl : t.baseUrl),
+            model: body.model?.trim() || (body.model !== undefined ? def.model : t.model),
+            maxContext: body.maxContext !== undefined ? body.maxContext : t.maxContext,
+            maxOutput: body.maxOutput !== undefined ? body.maxOutput : t.maxOutput,
+          },
+        });
+        break;
+      }
+      case "remove": {
+        if (!body?.id) return reply.code(400).send({ error: "id 必填" });
+        const t = await prisma.aiModelProfile.findUnique({ where: { id: body.id } });
+        if (!t) return reply.code(404).send({ error: "模型不存在" });
+        await prisma.aiModelProfile.delete({ where: { id: body.id } });
+        // 删除激活项时让第一条成为新的激活
+        if (t.active) {
+          const next = await prisma.aiModelProfile.findFirst({ orderBy: { createdAt: "asc" } });
+          if (next) await prisma.aiModelProfile.update({ where: { id: next.id }, data: { active: true } });
+        }
+        break;
+      }
+      case "setActive": {
+        if (!body?.id) return reply.code(400).send({ error: "id 必填" });
+        const t = await prisma.aiModelProfile.findUnique({ where: { id: body.id } });
+        if (!t) return reply.code(404).send({ error: "模型不存在" });
+        await prisma.$transaction([
+          prisma.aiModelProfile.updateMany({ where: { active: true }, data: { active: false } }),
+          prisma.aiModelProfile.update({ where: { id: body.id }, data: { active: true } }),
+        ]);
+        break;
+      }
+      case "clear": {
+        await prisma.aiModelProfile.deleteMany({});
+        break;
+      }
+      default:
+        return reply.code(400).send({ error: `未知 action: ${action}` });
+    }
+    await syncProfiles(prisma);
+    const cur = listProfiles();
+    return buildConfigPayload(cur.profiles, cur.activeId, getDefaultConfig());
   });
 
-  // 重置为 .env
+  // 清空所有模型 profile（回到 .env 逻辑）
   app.delete("/ai/config", async (request, reply) => {
     if (!request.userId) return reply.code(401).send({ error: "未登录" });
-    resetRuntimeConfig();
-    return { ok: true, config: getDefaultConfig(), available: isLLMAvailable() };
+    await app.prisma.aiModelProfile.deleteMany({});
+    await syncProfiles(app.prisma);
+    const cur = listProfiles();
+    return buildConfigPayload(cur.profiles, cur.activeId, getDefaultConfig());
   });
 
   // 标记分析结果中的某条建议为「已应用」，落库到 Resume.analysis（供重开回看）
@@ -674,6 +880,7 @@ export async function aiModule(app: FastifyInstance) {
         const match = await jdMatch(content, parsed.data.jd.trim());
         if (match) result.match = match;
       }
+      if (result.llmUsed) await recordCall(app.prisma, request.userId, result, { resumeId: parsed.data.resumeId ?? null });
       if (parsed.data.resumeId && !parsed.data.jd?.trim()) {
         await app.prisma.resume.update({
           where: { id: parsed.data.resumeId },
@@ -692,6 +899,7 @@ export async function aiModule(app: FastifyInstance) {
       raw.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
 
     const result = await analyze(content, parsed.data.jd, (d) => send("reasoning", { delta: d }), (d) => send("content", { delta: d }));
+    if (result.llmUsed) await recordCall(app.prisma, request.userId, result, { resumeId: parsed.data.resumeId ?? null });
 
     if (parsed.data.jd?.trim()) {
       const match = await jdMatch(content, parsed.data.jd.trim());

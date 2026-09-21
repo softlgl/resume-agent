@@ -48,6 +48,22 @@ function clearDraft(id: string) {
   localStorage.removeItem(draftKey(id));
 }
 
+// 归一化简历内容：保证容器字段类型安全。
+// 顶层 basic 应为对象、works/educations/projects/skills 应为数组。
+// 历史脏数据（如早期 bug 曾把整段 AI 改写覆写成字符串，导致 works 变成 string）
+// 落在 draft 或 DB 里，加载时必须清洗，否则渲染 content.works.map 会崩溃。
+function sanitizeContent(c: any): ResumeContent {
+  const base = emptyResumeContent();
+  const toArray = (v: any): any[] => (Array.isArray(v) ? v : []);
+  return {
+    basic: c && c.basic && typeof c.basic === "object" ? { ...base.basic, ...c.basic } : base.basic,
+    works: toArray(c?.works),
+    educations: toArray(c?.educations),
+    projects: toArray(c?.projects),
+    skills: toArray(c?.skills),
+  } as ResumeContent;
+}
+
 export interface ResumeMeta {
   id: string;
   title: string;
@@ -127,7 +143,7 @@ export const useResumeStore = create<ResumeState>((set, get) => ({
       id: data.id,
       title: data.title,
       templateId: data.templateId,
-      content: data.content,
+      content: sanitizeContent(data.content),
       error: null,
     });
     setCurrentId(data.id);
@@ -174,7 +190,7 @@ export const useResumeStore = create<ResumeState>((set, get) => ({
         !draftContent.basic?.name &&
         !(draftContent.works?.length || draftContent.educations?.length || draftContent.projects?.length || draftContent.skills?.length);
       if (draftIsEmpty) clearDraft(id);
-      const useContent = (draftIsEmpty ? r.content : draftContent ?? r.content) as ResumeContent;
+      const useContent = sanitizeContent((draftIsEmpty ? r.content : draftContent ?? r.content) as ResumeContent);
       const data = {
         id: r.id,
         title: draft?.title ?? r.title,

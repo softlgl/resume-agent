@@ -1,3 +1,34 @@
+export interface AIProfile {
+  id: string;
+  name: string;
+  provider: string;
+  baseUrl: string;
+  model: string;
+  maxContext: number;
+  maxOutput: number;
+  apiKeyMasked: string;
+  active: boolean;
+}
+
+export interface LlmCallLog {
+  id: string;
+  kind: "analyze" | "import";
+  resumeId: string | null;
+  provider: string;
+  model: string;
+  ok: boolean;
+  reasoning: string | null;
+  output: string | null;
+  createdAt: string;
+}
+
+export interface AIConfigResponse {
+  profiles: AIProfile[];
+  activeId: string | null;
+  config: { provider: string; baseUrl: string; model: string; apiKeyMasked: string };
+  available: boolean;
+}
+
 const TOKEN_KEY = "resume_agent_token";
 
 export function getToken(): string | null {
@@ -80,15 +111,19 @@ export const api = {
       method: "POST",
       body: JSON.stringify(data),
     }),
-  // LLM 配置
+  // LLM 配置（多模型 profiles + 当前激活）
   aiHealth: () => request<{ llmAvailable: boolean; provider: string | null; config?: any }>("/ai/health"),
-  aiGetConfig: () => request<{ provider: string; baseUrl: string; model: string; apiKeyMasked: string }>("/ai/config"),
-  aiSetConfig: (cfg: { provider?: string; baseUrl?: string; model?: string; apiKey?: string }) =>
-    request<{ ok: boolean; available: boolean; config: any }>("/ai/config", {
-      method: "POST",
-      body: JSON.stringify(cfg),
-    }),
-  aiResetConfig: () => request<{ ok: boolean; available: boolean; config: any }>("/ai/config", { method: "DELETE" }),
+  aiGetConfig: () => request<AIConfigResponse>("/ai/config"),
+  aiAddProfile: (p: { name?: string; provider: string; baseUrl?: string; model?: string; apiKey?: string; maxContext?: number; maxOutput?: number }) =>
+    request<AIConfigResponse>("/ai/config", { method: "POST", body: JSON.stringify({ action: "add", ...p }) }),
+  aiUpdateProfile: (id: string, p: { name?: string; provider?: string; baseUrl?: string; model?: string; apiKey?: string; maxContext?: number; maxOutput?: number }) =>
+    request<AIConfigResponse>("/ai/config", { method: "POST", body: JSON.stringify({ action: "update", id, ...p }) }),
+  aiRemoveProfile: (id: string) =>
+    request<AIConfigResponse>("/ai/config", { method: "POST", body: JSON.stringify({ action: "remove", id }) }),
+  aiSwitchProfile: (id: string) =>
+    request<AIConfigResponse>("/ai/config", { method: "POST", body: JSON.stringify({ action: "setActive", id }) }),
+  aiResetConfig: () => request<AIConfigResponse>("/ai/config", { method: "DELETE" }),
+  aiLatestCall: () => request<{ call: LlmCallLog | null }>("/ai/calls/latest"),
 
   // ---- 流式（SSE）版本：逐字接收 LLM 思考过程 ----
   analyzeResumeStream: (

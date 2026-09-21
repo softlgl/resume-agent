@@ -52,6 +52,7 @@ export interface EduExp {
 export interface ProjectExp {
   id: string;
   name: string;
+  company: string; // 所属公司（可引用工作经历的公司，也可为空）
   role: string;
   start: string;
   end: string;

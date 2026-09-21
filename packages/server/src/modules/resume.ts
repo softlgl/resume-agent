@@ -70,7 +70,11 @@ export async function resumeModule(app: FastifyInstance) {
     const { id } = request.params as { id: string };
     const existing = await app.prisma.resume.findFirst({ where: { id, userId: request.userId } });
     if (!existing) return reply.code(404).send({ error: "简历不存在" });
-    await app.prisma.resume.delete({ where: { id } });
+    // 级联清理：LlmCallLog.resumeId 无外键约束，删除简历前手动删除其调用日志（等价于数据库级联）
+    await app.prisma.$transaction([
+      app.prisma.llmCallLog.deleteMany({ where: { resumeId: id } }),
+      app.prisma.resume.delete({ where: { id } }),
+    ]);
     return { ok: true };
   });
 }

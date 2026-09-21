@@ -310,7 +310,7 @@ export async function renderPdfFallback(content: ResumeContent, templateId: stri
             sectionTitle("工作经历");
             content.works.forEach((w) => {
               inlineTitle(`${w.role} · ${w.company}`, `${w.start} - ${w.current ? "至今" : w.end}`);
-              splitBulletLines(w.description).forEach((l) => bullet(l));
+              splitBulletLines(w.description).forEach((l, _i, arr) => (arr.length > 1 ? bullet(l) : body(l)));
               pg.setY(pg.y() + S.blockAfter);
             });
             break;
@@ -327,13 +327,13 @@ export async function renderPdfFallback(content: ResumeContent, templateId: stri
             if (!content.projects.length) return;
             sectionTitle("项目经历");
             content.projects.forEach((p) => {
-              inlineTitle(`${p.name} · ${p.role}`, `${p.start} - ${p.end}`);
+              inlineTitle(`${p.name}${p.company ? ` · ${p.company}` : ""} · ${p.role}`, `${p.start} - ${p.end}`);
               if (p.link) {
                 pg.space(F.small * S.lineHeight + S.lineGap);
                 const lY = textAt(p.link, F.small, c.accent);
                 pg.setY(lY + S.bulletAfter);
               }
-              splitBulletLines(p.description).forEach((l) => bullet(l));
+              splitBulletLines(p.description).forEach((l, _i, arr) => (arr.length > 1 ? bullet(l) : body(l)));
               pg.setY(pg.y() + S.blockAfter);
             });
             break;
@@ -495,7 +495,7 @@ export async function renderPdfFallback(content: ResumeContent, templateId: stri
             sectionTitle("工作经历");
             content.works.forEach((w) => {
               inlineTitle(`${w.role} · ${w.company}`, `${w.start} - ${w.current ? "至今" : w.end}`);
-              splitBulletLines(w.description).forEach((l) => bullet(l));
+              splitBulletLines(w.description).forEach((l, _i, arr) => (arr.length > 1 ? bullet(l) : body(l)));
               pg.setY(pg.y() + S.blockAfter);
             });
             break;
@@ -512,13 +512,13 @@ export async function renderPdfFallback(content: ResumeContent, templateId: stri
             if (!content.projects.length) return;
             sectionTitle("项目经历");
             content.projects.forEach((p) => {
-              inlineTitle(`${p.name} · ${p.role}`, `${p.start} - ${p.end}`);
+              inlineTitle(`${p.name}${p.company ? ` · ${p.company}` : ""} · ${p.role}`, `${p.start} - ${p.end}`);
               if (p.link) {
                 pg.space(F.small * S.lineHeight + S.lineGap);
                 const lY = textAt(p.link, F.small, c.accent);
                 pg.setY(lY + S.bulletAfter);
               }
-              splitBulletLines(p.description).forEach((l) => bullet(l));
+              splitBulletLines(p.description).forEach((l, _i, arr) => (arr.length > 1 ? bullet(l) : body(l)));
               pg.setY(pg.y() + S.blockAfter);
             });
             break;

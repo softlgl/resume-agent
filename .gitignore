@@ -22,6 +22,9 @@ packages/server/prisma/seed.d.ts
 .env.*.local
 !.env.example
 
+# LLM 模型配置持久化文件（含完整 apiKey，严禁入库）
+packages/server/.ai-profiles.json
+
 # ---------- 日志 ----------
 logs/
 *.log
@@ -63,8 +66,7 @@ ehthumbs.db
 Desktop.ini
 
 # ---------- 本地调试产物 ----------
-out_docx.bin
-out_pdf.bin
+out_*.bin
 *.tmp
 *.temp
 
@@ -77,3 +79,4 @@ packages/server/assets/fonts/
 
 # IDE / 本地工具数据
 .codebuddy/
+.trae/

@@ -90,9 +90,9 @@ export async function renderDocx(content: ResumeContent, templateId: string): Pr
               spacing: { before: i === 0 ? 0 : tw(SP.blockAfter), ...LINE_15 },
             })
           );
-          splitBulletLines(w.description).forEach((l) =>
+          splitBulletLines(w.description).forEach((l, _i, arr) =>
             children.push(
-              new Paragraph({ children: [tr({ text: `- ${l}`, size: S(F.bullet), color: hex(c.text) })], indent: { left: 360 }, spacing: { after: tw(SP.bulletAfter), ...LINE_15 } })
+              new Paragraph({ children: [tr({ text: arr.length > 1 ? `- ${l}` : l, size: S(arr.length > 1 ? F.bullet : F.body), color: hex(c.text) })], indent: { left: arr.length > 1 ? 360 : 0 }, spacing: { after: tw(SP.bulletAfter), ...LINE_15 } })
             )
           );
         });
@@ -121,7 +121,7 @@ export async function renderDocx(content: ResumeContent, templateId: string): Pr
           children.push(
             new Paragraph({
               children: [
-                tr({ text: `${p.name} · ${p.role}`, bold: true, size: S(F.body * SP.inlineTitleScale), color: hex(c.text) }),
+                tr({ text: `${p.name}${p.company ? ` · ${p.company}` : ""} · ${p.role}`, bold: true, size: S(F.body * SP.inlineTitleScale), color: hex(c.text) }),
                 tr({ text: `\t${p.start} - ${p.end}`, size: S(F.small), color: hex(c.muted) }),
               ],
               tabStops: [{ type: TabStopType.RIGHT, position: TabStopPosition.MAX }],
@@ -129,9 +129,9 @@ export async function renderDocx(content: ResumeContent, templateId: string): Pr
             })
           );
           if (p.link) children.push(body(p.link, { color: hex(c.accent) }));
-          splitBulletLines(p.description).forEach((l) =>
+          splitBulletLines(p.description).forEach((l, _i, arr) =>
             children.push(
-              new Paragraph({ children: [tr({ text: `- ${l}`, size: S(F.bullet), color: hex(c.text) })], indent: { left: 360 }, spacing: { after: tw(SP.bulletAfter), ...LINE_15 } })
+              new Paragraph({ children: [tr({ text: arr.length > 1 ? `- ${l}` : l, size: S(arr.length > 1 ? F.bullet : F.body), color: hex(c.text) })], indent: { left: arr.length > 1 ? 360 : 0 }, spacing: { after: tw(SP.bulletAfter), ...LINE_15 } })
             )
           );
         });

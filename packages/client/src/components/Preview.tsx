@@ -52,9 +52,10 @@ export default function Preview({ content, templateId, onPagesChange }: { conten
   // 测量宽度（mm）：单栏=整页去左右边距；双栏=主区去左右边距
   const marginMm = (PRINT.margin * 25.4) / 72;
   const mainPct = 1 - PRINT.sidebarWidth / PRINT.page.width;
-  const measureWidth = single
-    ? `${210 - marginMm * 2}mm`
-    : `${210 * mainPct - marginMm * 2}mm`;
+  const measureWidthMm = single ? 210 - marginMm * 2 : 210 * mainPct - marginMm * 2;
+  const measureWidth = `${measureWidthMm}mm`;
+  // 测量容器理论宽度（px，96dpi）：用于反推预览区 transform:scale 缩放系数
+  const measureWidthPx = (measureWidthMm / 25.4) * 96;
 
   const renderSectionBlocks = (key: string) => {
     const blocks: React.ReactNode[] = [];
@@ -127,16 +128,21 @@ export default function Preview({ content, templateId, onPagesChange }: { conten
   const [blockHeights, setBlockHeights] = useState<number[]>([]);
   const [measured, setMeasured] = useState(false);
   const measureRef = useRef<HTMLDivElement>(null);
+  const measureInnerRef = useRef<HTMLDivElement>(null);
 
-  // 测量每个块的高度
+  // 测量每个块的高度（亚像素精度）
+  // 注意：预览区父级带 transform:scale（等比缩放适配），getBoundingClientRect 返回的是
+  // 缩放后的视觉尺寸，因此先用测量容器「视觉宽 / 理论宽」求出缩放系数，再把视觉高度还原为布局高度
   useLayoutEffect(() => {
     if (!measureRef.current) return;
+    const visualW = measureInnerRef.current?.getBoundingClientRect().width ?? 0;
+    const scale = visualW > 0 && measureWidthPx > 0 ? visualW / measureWidthPx : 1;
     const nodes = measureRef.current.querySelectorAll<HTMLElement>("[data-block]");
     const heights: number[] = [];
-    nodes.forEach((n) => heights.push(n.offsetHeight));
+    nodes.forEach((n) => heights.push(n.getBoundingClientRect().height / scale));
     setBlockHeights(heights);
     setMeasured(true);
-  }, [content, templateId, allBlocks.length]);
+  }, [content, templateId, allBlocks.length, measureWidthPx]);
 
   // 每页可用高度（px）——按 A4 内容区 mm 换算（96dpi）
   const contentHeightPx = (PAGE_CONTENT_MM / 25.4) * 96;
@@ -186,7 +192,9 @@ export default function Preview({ content, templateId, onPagesChange }: { conten
     if (single) {
       return (
         <div style={{ width: "210mm", height: "297mm", background: "#fff", padding: mm(PRINT.margin), boxSizing: "border-box", fontFamily: FONT_STACK, overflow: "hidden" }}>
-          {blockIdx.map((i) => allBlocks[i].block)}
+          {blockIdx.map((i) => (
+            <BlockWrap key={allBlocks[i].key}>{allBlocks[i].block}</BlockWrap>
+          ))}
         </div>
       );
     }
@@ -197,7 +205,9 @@ export default function Preview({ content, templateId, onPagesChange }: { conten
           {isFirst && renderSidebar(true)}
         </aside>
         <main style={{ width: `${(1 - PRINT.sidebarWidth / PRINT.page.width) * 100}%`, background: "#fff", padding: mm(PRINT.margin), boxSizing: "border-box" }}>
-          {blockIdx.map((i) => allBlocks[i].block)}
+          {blockIdx.map((i) => (
+            <BlockWrap key={allBlocks[i].key}>{allBlocks[i].block}</BlockWrap>
+          ))}
         </main>
       </div>
     );
@@ -205,14 +215,16 @@ export default function Preview({ content, templateId, onPagesChange }: { conten
 
   return (
     <div>
-      {/* 隐藏测量容器：渲染全部块，用于量高度（与真实渲染同宽） */}
+      {/* 隐藏测量容器：渲染全部块，用于量高度（与真实渲染同宽）。
+          块用 BlockWrap（display:flow-root）包裹，阻止子元素 margin 穿透/折叠到块外，
+          使 offsetHeight/getBoundingClientRect 高度包含块自身的完整上下 margin */}
       <div
         ref={measureRef}
         style={{ position: "absolute", visibility: "hidden", pointerEvents: "none", left: 0, top: 0, fontFamily: FONT_STACK }}
       >
-        <div style={{ width: measureWidth }}>
+        <div ref={measureInnerRef} style={{ width: measureWidth }}>
           {allBlocks.map((x, i) => (
-            <div key={x.key} data-block={i}>{x.block}</div>
+            <div key={x.key} data-block={i} style={{ display: "flow-root" }}>{x.block}</div>
           ))}
         </div>
       </div>
@@ -220,10 +232,11 @@ export default function Preview({ content, templateId, onPagesChange }: { conten
       {/* 渲染分页后的纸张 */}
       <div style={{ display: "flex", flexDirection: "column", gap: "8mm", alignItems: "center" }}>
         {!measured || blockHeights.length !== allBlocks.length ? (
-          // 未测量完：渲染完整一页占位
+          // 未测量完：渲染完整一页占位（同样用 BlockWrap，与测量/最终渲染布局一致）
           <div style={{ width: "210mm", minHeight: "297mm", background: "#fff", padding: mm(PRINT.margin), boxSizing: "border-box", fontFamily: FONT_STACK }}>
-            {single && header}
-            {allBlocks.filter((x) => x.key !== "header").map((x) => x.block)}
+            {allBlocks.map((x) => (
+              <BlockWrap key={x.key}>{x.block}</BlockWrap>
+            ))}
           </div>
         ) : (
           pages.map((blockIdx, pi) => (
@@ -235,6 +248,12 @@ export default function Preview({ content, templateId, onPagesChange }: { conten
       </div>
     </div>
   );
+}
+
+// 分页块包裹层：display:flow-root 建立独立 BFC，阻止块内 margin 穿透/折叠到块外，
+// 使块高度（含自身上下 margin）完整计入分页累计，与测量侧口径一致，避免漏算导致页底被裁
+function BlockWrap({ children }: { children: React.ReactNode }) {
+  return <div style={{ display: "flow-root" }}>{children}</div>;
 }
 
 // 子组件（避免内联太多）——间距全部读取 PRINT.spacing，与 PDF/DOCX 对齐
@@ -258,7 +277,7 @@ function WorkBlock({ title, right, desc, c, F }: any) {
         <span style={{ fontSize: pt(F.small), color: c.muted, lineHeight: S.lineHeight }}>{right}</span>
       </div>
       {desc.map((l: string, i: number) => (
-        <p key={i} style={{ fontSize: pt(F.bullet), marginLeft: 12, marginBottom: px(S.bulletAfter), color: c.text, lineHeight: S.lineHeight }}>- {l}</p>
+        <p key={i} style={{ fontSize: pt(F.bullet), marginLeft: desc.length > 1 ? 12 : 0, marginBottom: px(S.bulletAfter), color: c.text, lineHeight: S.lineHeight }}>{desc.length > 1 ? `- ${l}` : l}</p>
       ))}
     </div>
   );
@@ -277,15 +296,17 @@ function EduBlock({ title, right, desc, c, F }: any) {
   );
 }
 function ProjectBlock({ p, c, F }: any) {
+  const lines = splitBulletLines(p.description);
+  const multi = lines.length > 1;
   return (
     <div style={{ marginBottom: px(S.blockAfter), breakInside: "avoid" }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
-        <span style={{ fontWeight: 700, fontSize: pt(F.body * S.inlineTitleScale), color: c.text, lineHeight: S.lineHeight }}>{p.name} · {p.role}</span>
+        <span style={{ fontWeight: 700, fontSize: pt(F.body * S.inlineTitleScale), color: c.text, lineHeight: S.lineHeight }}>{p.name}{p.company ? ` · ${p.company}` : ""} · {p.role}</span>
         <span style={{ fontSize: pt(F.small), color: c.muted, lineHeight: S.lineHeight }}>{p.start} - {p.end}</span>
       </div>
       {p.link && <p style={{ fontSize: pt(F.small), marginBottom: px(S.bulletAfter), color: c.accent, lineHeight: S.lineHeight }}>{p.link}</p>}
-      {splitBulletLines(p.description).map((l: string, i: number) => (
-        <p key={i} style={{ fontSize: pt(F.bullet), marginLeft: 12, marginBottom: px(S.bulletAfter), color: c.text, lineHeight: S.lineHeight }}>- {l}</p>
+      {lines.map((l: string, i: number) => (
+        <p key={i} style={{ fontSize: pt(F.bullet), marginLeft: multi ? 12 : 0, marginBottom: px(S.bulletAfter), color: c.text, lineHeight: S.lineHeight }}>{multi ? `- ${l}` : l}</p>
       ))}
     </div>
   );

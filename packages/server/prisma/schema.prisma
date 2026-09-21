@@ -15,6 +15,35 @@ model User {
   resumes   Resume[]
 }
 
+model AiModelProfile {
+  id         String   @id @default(cuid())
+  name       String
+  provider   String
+  apiKey     String   @default("")
+  baseUrl    String
+  model      String
+  maxContext Int      @default(32768) // 输入上下文上限（token）
+  maxOutput  Int      @default(4096) // 输出上限（token），运行时作为真实 max_tokens 上限
+  active     Boolean  @default(false) // 全局同时只有一个激活
+  createdAt  DateTime @default(now())
+}
+
+model LlmCallLog {
+  id        String   @id @default(cuid())
+  userId    String
+  kind      String   @default("analyze") // analyze | import，归属维度
+  resumeId  String? // 分析按简历归属；导入为 null（按 userId）
+  provider  String
+  model     String
+  ok        Boolean  @default(true) // 是否成功拿到模型返回
+  reasoning String?  @db.Text // 模型思考过程原文
+  output    String?  @db.Text // 模型返回原始 JSON
+  createdAt DateTime @default(now())
+
+  @@index([userId, createdAt])
+  @@index([resumeId, createdAt])
+}
+
 model Resume {
   id        String   @id @default(cuid())
   userId    String

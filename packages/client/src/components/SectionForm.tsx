@@ -8,7 +8,8 @@ function uid(): string {
 interface FieldDef {
   key: string;
   label: string;
-  type?: "text" | "textarea" | "date" | "month" | "checkbox";
+  type?: "text" | "textarea" | "date" | "month" | "checkbox" | "datalist";
+  options?: string[]; // type 为 datalist 时的候选建议项
 }
 
 export interface SectionFormProps<T> {
@@ -85,6 +86,21 @@ export default function SectionForm<T extends { id: string }>({
                       value={(item as any)[f.key] ?? ""}
                       onChange={(e) => update(idx, { [f.key]: e.target.value } as Partial<T>)}
                     />
+                  ) : f.type === "datalist" ? (
+                    <span className="block">
+                      <input
+                        list={`${sectionKey}-${f.key}-${item.id}`}
+                        className="w-full mt-1 rounded-lg border border-slate-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"
+                        placeholder="从工作经历中选择或手动输入"
+                        value={(item as any)[f.key] ?? ""}
+                        onChange={(e) => update(idx, { [f.key]: e.target.value } as Partial<T>)}
+                      />
+                      <datalist id={`${sectionKey}-${f.key}-${item.id}`}>
+                        {(f.options || []).map((opt) => (
+                          <option key={opt} value={opt} />
+                        ))}
+                      </datalist>
+                    </span>
                   ) : (
                     <input
                       type="text"

@@ -3,7 +3,7 @@ import { createPortal } from "react-dom";
 import { useNavigate } from "react-router-dom";
 import { Loader2, Upload, X, FileText, Plus, Trash2, AlertTriangle, Brain, Braces } from "lucide-react";
 import { TEMPLATES } from "@resume-agent/shared";
-import { api } from "../api/client";
+import { api, type AIProfile } from "../api/client";
 import { useResumeStore } from "../store/resume";
 
 interface ParseResult {
@@ -110,11 +110,29 @@ export default function ImportResumeDialog({ onClose }: { onClose: () => void })
   const [content, setContent] = useState<any | null>(null);
   const [templateId, setTemplateId] = useState("classic");
   const [llmAvailable, setLlmAvailable] = useState<boolean | null>(null);
+  const [models, setModels] = useState<AIProfile[]>([]);
+  const [activeId, setActiveId] = useState<string | null>(null);
 
-  // 打开弹窗时查询 LLM 是否可用，用于「未配置 AI 模型」前置提示
+  // 打开弹窗时查询 LLM 是否可用 + 加载模型列表，用于「未配置 AI 模型」前置提示与当前模型切换
   useEffect(() => {
     api.aiHealth().then((r) => setLlmAvailable(r.llmAvailable)).catch(() => {});
+    api.aiGetConfig()
+      .then((r) => {
+        setModels(r.profiles ?? []);
+        setActiveId(r.activeId ?? null);
+        setLlmAvailable(r.available);
+      })
+      .catch(() => {});
   }, []);
+
+  const switchModel = async (id: string) => {
+    try {
+      const r = await api.aiSwitchProfile(id);
+      setModels(r.profiles ?? []);
+      setActiveId(r.activeId ?? null);
+      setLlmAvailable(r.available);
+    } catch {}
+  };
 
   const pick = async (file: File | undefined) => {
     if (!file) return;
@@ -193,6 +211,22 @@ export default function ImportResumeDialog({ onClose }: { onClose: () => void })
             className="hidden"
             onChange={(e) => pick(e.target.files?.[0])}
           />
+          {/* 当前模型快速切换 */}
+          {models.length > 0 && (
+            <label className="block mb-3 text-xs text-slate-500">
+              <span className="mb-0.5 block">当前模型（AI 识别使用）</span>
+              <select
+                value={activeId ?? ""}
+                onChange={(e) => { const id = e.target.value; if (id && id !== activeId) switchModel(id); }}
+                className="w-full rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-sm text-slate-800 outline-none focus:border-brand-400 focus:ring-1 focus:ring-brand-200"
+              >
+                {models.map((m) => (
+                  <option key={m.id} value={m.id}>{m.name}{m.active ? "（当前）" : ""}</option>
+                ))}
+              </select>
+            </label>
+          )}
+
           {/* 前置：未配置 AI 模型提示 */}
           {llmAvailable === false && !parsing && (
             <div className="mb-3 flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700">
@@ -395,13 +429,14 @@ export default function ImportResumeDialog({ onClose }: { onClose: () => void })
                 addLabel="添加项目"
                 onAdd={() =>
                   patchContent((c) =>
-                    c.projects.push({ id: `p${Date.now()}`, name: "", role: "", start: "", end: "", link: "", description: "" })
+                    c.projects.push({ id: `p${Date.now()}`, name: "", company: "", role: "", start: "", end: "", link: "", description: "" })
                   )
                 }
                 onRemove={(id) => patchContent((c) => (c.projects = c.projects.filter((x: any) => x.id !== id)))}
                 renderFields={(it) => (
                   <div className="grid grid-cols-2 gap-3 pr-7">
                     <Field label="项目名" value={it.name || ""} onChange={(v) => patchContent((c) => (c.projects.find((x: any) => x.id === it.id)!.name = v))} />
+                    <Field label="所属公司" value={it.company || ""} onChange={(v) => patchContent((c) => (c.projects.find((x: any) => x.id === it.id)!.company = v))} />
                     <Field label="角色" value={it.role || ""} onChange={(v) => patchContent((c) => (c.projects.find((x: any) => x.id === it.id)!.role = v))} />
                     <Field label="开始时间" value={it.start || ""} onChange={(v) => patchContent((c) => (c.projects.find((x: any) => x.id === it.id)!.start = v))} />
                     <Field label="结束时间" value={it.end || ""} onChange={(v) => patchContent((c) => (c.projects.find((x: any) => x.id === it.id)!.end = v))} />

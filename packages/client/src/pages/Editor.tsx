@@ -7,7 +7,8 @@ import TemplatePicker from "../components/TemplatePicker";
 import SectionForm from "../components/SectionForm";
 import ResumeSwitcher from "../components/ResumeSwitcher";
 import AIAnalysisPanel from "../components/AIAnalysisPanel";
-import { FileDown, Save, Check, LogOut, LayoutTemplate, Sparkles } from "lucide-react";
+import ModelManager from "../components/ModelManager";
+import { FileDown, Save, Check, LogOut, LayoutTemplate, Sparkles, Settings, X } from "lucide-react";
 import type { WorkExp, EduExp, ProjectExp, SkillGroup } from "@resume-agent/shared";
 
 export default function Editor() {
@@ -20,6 +21,7 @@ export default function Editor() {
   const [previewScale, setPreviewScale] = useState(1);
   const [previewPages, setPreviewPages] = useState(1);
   const [aiPanelOpen, setAiPanelOpen] = useState(false);
+  const [modelModalOpen, setModelModalOpen] = useState(false);
   const exportRef = useRef<HTMLDivElement>(null);
   const previewAreaRef = useRef<HTMLDivElement>(null);
   const navigate = useNavigate();
@@ -58,8 +60,16 @@ export default function Editor() {
     const rest = tokens.slice(1);
 
     if (rest.length === 0) {
-      // 顶层字段：直接 setField
-      setField(topKey, newValue as any);
+      // 顶层字段：直接 setField。
+      // 但顶层键(basic/works/educations/projects/skills)都是对象或数组，绝非字符串。
+      // 若 AI 把整段 section 改写(如 field="works"、rewrite=一段文本)当作新值下发，
+      // 这里一旦 setField(topKey, 纯文本) 会把数组/对象覆写成字符串，导致渲染崩溃。
+      // 故仅当新值与现有顶层值同类型(字符串→字符串)时才覆盖；容器型顶层一律跳过。
+      if (typeof content[topKey] === "string") {
+        setField(topKey, newValue as any);
+        return;
+      }
+      console.warn(`[applyByPath] 忽略对顶层容器字段 ${String(topKey)} 的改写：不能把文本赋给数组/对象`, newValue);
       return;
     }
 
@@ -247,6 +257,13 @@ export default function Editor() {
             >
               <Sparkles size={15} /> AI 分析
             </button>
+            <button
+              onClick={() => setModelModalOpen(true)}
+              title="模型设置（全局）"
+              className="p-2 rounded-lg text-slate-500 hover:text-brand-600 hover:bg-slate-100 transition"
+            >
+              <Settings size={18} />
+            </button>
             <div className="relative" ref={exportRef}>
               <button
                 onClick={() => setMenuOpen((v) => !v)}
@@ -399,10 +416,16 @@ export default function Editor() {
             title="项目经历"
             sectionKey="projects"
             items={content.projects}
-            empty={() => ({ id: "", name: "", role: "", start: "", end: "", link: "", description: "" })}
+            empty={() => ({ id: "", name: "", company: "", role: "", start: "", end: "", link: "", description: "" })}
             onChange={(v) => setField("projects", v)}
             fields={[
               { key: "name", label: "项目名称" },
+              {
+                key: "company",
+                label: "所属公司",
+                type: "datalist",
+                options: Array.from(new Set(content.works.map((w) => w.company.trim()).filter(Boolean))),
+              },
               { key: "role", label: "角色" },
               { key: "start", label: "开始时间", type: "month" },
               { key: "end", label: "结束时间", type: "month" },
@@ -467,6 +490,30 @@ export default function Editor() {
         }}
         onGoto={gotoSection}
       />
+
+      {/* 全局模型设置 Modal */}
+      {modelModalOpen && (
+        <div className="fixed inset-0 z-40" role="dialog" aria-modal="true">
+          <div className="absolute inset-0 bg-black/30" onClick={() => setModelModalOpen(false)} />
+          <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-[480px] max-w-[calc(100vw-32px)] max-h-[80vh] bg-white rounded-2xl shadow-2xl flex flex-col animate-[slideIn_.2s_ease-out]">
+            <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100 shrink-0">
+              <div className="flex items-center gap-2">
+                <Settings size={18} className="text-brand-600" />
+                <span className="font-semibold text-slate-800">模型设置（全局）</span>
+              </div>
+              <button
+                onClick={() => setModelModalOpen(false)}
+                className="p-1.5 rounded-lg text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition"
+              >
+                <X size={18} />
+              </button>
+            </div>
+            <div className="flex-1 overflow-y-auto px-5 py-4 bg-slate-50/60">
+              <ModelManager open />
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
