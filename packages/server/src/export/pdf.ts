@@ -95,14 +95,14 @@ try {
  *  1) 先尝试 DOCX → Word COM → PDF（排版效果与 Word 导出一致，技能胶囊等更美观）
  *  2) 若失败则回退到 pdfkit 手写坐标布局（仍可用，但排版略逊）
  */
-export async function renderPdf(content: ResumeContent, templateId: string): Promise<Buffer> {
+export async function renderPdf(content: ResumeContent, templateId: string, pageBreakIds: string[] = []): Promise<Buffer> {
   try {
-    const docxBuf = await renderDocx(content, templateId);
+    const docxBuf = await renderDocx(content, templateId, pageBreakIds);
     return await convertDocxToPdf(docxBuf);
   } catch (primaryErr) {
     // eslint-disable-next-line no-console
     console.warn("[renderPdf] DOCX→Word path failed, fallback to pdfkit. Reason:", (primaryErr as any)?.message ?? primaryErr);
-    return renderPdfFallback(content, templateId);
+    return renderPdfFallback(content, templateId, pageBreakIds);
   }
 }
 
@@ -146,7 +146,7 @@ function createPaginator(doc: PDFKit.PDFDocument, top: number, bottom: number, o
 }
 
 /** pdfkit 降级实现 */
-export async function renderPdfFallback(content: ResumeContent, templateId: string): Promise<Buffer> {
+export async function renderPdfFallback(content: ResumeContent, templateId: string, pageBreakIds: string[] = []): Promise<Buffer> {
   return new Promise<Buffer>((resolve) => {
     const doc = new PDFDocument({ size: [PRINT.page.width, PRINT.page.height], margin: 0, bufferPages: true });
     const chunks: Buffer[] = [];
@@ -171,12 +171,16 @@ export async function renderPdfFallback(content: ResumeContent, templateId: stri
     if (b.workYears) extraLines.push(`工作年限：${b.workYears}`);
 
     const pageBottom = PRINT.page.height - PRINT.margin;
+    // 预览上报的分页断点（块 id）：在这些块起始处强制换页，使 pdfkit 降级输出逐页与预览一致
+    const breakSet = new Set(pageBreakIds);
 
     if (tpl.layout === "two-column" && tpl.sidebarBasic) {
       const sidebarW = PRINT.sidebarWidth;
       const mainW = PRINT.page.width - sidebarW;
       const sideColor = hexColor(c.sidebar || "#1E293B");
 
+      // 侧栏内边距比主区页边距窄（sidebarPad），保证窄侧栏内联系方式不折行
+      const sidePad = PRINT.sidebarPad;
       const drawSidebarBg = () => {
         doc.save();
         doc.rect(0, 0, sidebarW, PRINT.page.height).fill(sideColor);
@@ -186,17 +190,17 @@ export async function renderPdfFallback(content: ResumeContent, templateId: stri
       doc.on("pageAdded", drawSidebarBg);
 
       doc.font("CJK").fontSize(F.sidebarName).fillColor("#FFFFFF");
-      let sy = pad;
-      doc.text(b.name || "姓名", pad, sy, { width: sidebarW - pad * 2, lineGap: S.lineGap });
+      let sy = sidePad;
+      doc.text(b.name || "姓名", sidePad, sy, { width: sidebarW - sidePad * 2, lineGap: S.lineGap });
       sy = doc.y + S.sideNameAfter;
       if (b.title) {
         doc.fontSize(F.sidebarTitle).fillColor("#93C5FD");
-        doc.text(b.title, pad, sy, { width: sidebarW - pad * 2, lineGap: S.lineGap });
+        doc.text(b.title, sidePad, sy, { width: sidebarW - sidePad * 2, lineGap: S.lineGap });
         sy = doc.y + S.sideTitleAfter;
       }
       sy += S.sideLabelBefore;
       doc.fontSize(F.sidebarLabel).fillColor("#FFFFFF");
-      doc.text("联系方式", pad, sy, { width: sidebarW - pad * 2, lineGap: S.lineGap });
+      doc.text("联系方式", sidePad, sy, { width: sidebarW - sidePad * 2, lineGap: S.lineGap });
       sy = doc.y + S.sideLabelAfter;
       doc.fontSize(F.sidebarField).fillColor("#CBD5E1");
       const sideFields = [
@@ -207,13 +211,20 @@ export async function renderPdfFallback(content: ResumeContent, templateId: stri
         ...extraLines,
       ].filter(Boolean) as string[];
       for (const line of sideFields) {
-        doc.text(line, pad, sy, { width: sidebarW - pad * 2, lineGap: S.lineGap });
+        doc.text(line, sidePad, sy, { width: sidebarW - sidePad * 2, lineGap: S.lineGap });
         sy = doc.y + S.sideFieldAfter;
       }
 
       const pg = createPaginator(doc, pad, pageBottom, drawSidebarBg);
       const mx = sidebarW + pad;
       const mw = mainW - pad * 2;
+      // 命中断点且当前不在页顶 → 强制换页（addPage 会触发 pageAdded 重画侧栏背景）
+      const brk = (id: string) => {
+        if (breakSet.has(id) && pg.y() > pad + 0.5) {
+          doc.addPage();
+          pg.setY(pad);
+        }
+      };
 
       const textAt = (str: string, size: number, color: string, opts: any = {}) => {
         doc.font("CJK").fontSize(size).fillColor(color);
@@ -302,13 +313,19 @@ export async function renderPdfFallback(content: ResumeContent, templateId: stri
         switch (key) {
           case "summary":
             if (!content.basic.summary) return;
+            brk("summary#title");
             sectionTitle("个人简介");
-            lines(content.basic.summary).forEach((l) => body(l));
+            lines(content.basic.summary).forEach((l, i) => {
+              brk(`summary#${i}`);
+              body(l);
+            });
             break;
           case "works":
             if (!content.works.length) return;
+            brk("works#title");
             sectionTitle("工作经历");
-            content.works.forEach((w) => {
+            content.works.forEach((w, i) => {
+              brk(`works#${i}`);
               inlineTitle(`${w.role} · ${w.company}`, `${w.start} - ${w.current ? "至今" : w.end}`);
               splitBulletLines(w.description).forEach((l, _i, arr) => (arr.length > 1 ? bullet(l) : body(l)));
               pg.setY(pg.y() + S.blockAfter);
@@ -316,8 +333,10 @@ export async function renderPdfFallback(content: ResumeContent, templateId: stri
             break;
           case "educations":
             if (!content.educations.length) return;
+            brk("educations#title");
             sectionTitle("教育经历");
-            content.educations.forEach((e) => {
+            content.educations.forEach((e, i) => {
+              brk(`educations#${i}`);
               inlineTitle(`${e.school} · ${e.major} · ${e.degree}`, `${e.start} - ${e.end}`);
               if (e.description) lines(e.description).forEach((l) => body(l));
               pg.setY(pg.y() + S.blockAfter);
@@ -325,8 +344,10 @@ export async function renderPdfFallback(content: ResumeContent, templateId: stri
             break;
           case "projects":
             if (!content.projects.length) return;
+            brk("projects#title");
             sectionTitle("项目经历");
-            content.projects.forEach((p) => {
+            content.projects.forEach((p, i) => {
+              brk(`projects#${i}`);
               inlineTitle(`${p.name}${p.company ? ` · ${p.company}` : ""} · ${p.role}`, `${p.start} - ${p.end}`);
               if (p.link) {
                 pg.space(F.small * S.lineHeight + S.lineGap);
@@ -339,8 +360,12 @@ export async function renderPdfFallback(content: ResumeContent, templateId: stri
             break;
           case "skills":
             if (!content.skills.length) return;
+            brk("skills#title");
             sectionTitle("技能");
-            content.skills.forEach((g) => skillRow(g));
+            content.skills.forEach((g, i) => {
+              brk(`skills#${i}`);
+              skillRow(g);
+            });
             break;
         }
       };
@@ -350,6 +375,13 @@ export async function renderPdfFallback(content: ResumeContent, templateId: stri
       const x = PRINT.margin;
       const cw = PRINT.page.width - PRINT.margin * 2;
       const pg = createPaginator(doc, PRINT.margin, pageBottom);
+      // 命中断点且当前不在页顶 → 强制换页
+      const brk = (id: string) => {
+        if (breakSet.has(id) && pg.y() > PRINT.margin + 0.5) {
+          doc.addPage();
+          pg.setY(PRINT.margin);
+        }
+      };
 
       const textAt = (str: string, size: number, color: string, opts: any = {}) => {
         doc.font("CJK").fontSize(size).fillColor(color);
@@ -487,13 +519,19 @@ export async function renderPdfFallback(content: ResumeContent, templateId: stri
         switch (key) {
           case "summary":
             if (!content.basic.summary) return;
+            brk("summary#title");
             sectionTitle("个人简介");
-            lines(content.basic.summary).forEach((l) => body(l));
+            lines(content.basic.summary).forEach((l, i) => {
+              brk(`summary#${i}`);
+              body(l);
+            });
             break;
           case "works":
             if (!content.works.length) return;
+            brk("works#title");
             sectionTitle("工作经历");
-            content.works.forEach((w) => {
+            content.works.forEach((w, i) => {
+              brk(`works#${i}`);
               inlineTitle(`${w.role} · ${w.company}`, `${w.start} - ${w.current ? "至今" : w.end}`);
               splitBulletLines(w.description).forEach((l, _i, arr) => (arr.length > 1 ? bullet(l) : body(l)));
               pg.setY(pg.y() + S.blockAfter);
@@ -501,8 +539,10 @@ export async function renderPdfFallback(content: ResumeContent, templateId: stri
             break;
           case "educations":
             if (!content.educations.length) return;
+            brk("educations#title");
             sectionTitle("教育经历");
-            content.educations.forEach((e) => {
+            content.educations.forEach((e, i) => {
+              brk(`educations#${i}`);
               inlineTitle(`${e.school} · ${e.major} · ${e.degree}`, `${e.start} - ${e.end}`);
               if (e.description) lines(e.description).forEach((l) => body(l));
               pg.setY(pg.y() + S.blockAfter);
@@ -510,8 +550,10 @@ export async function renderPdfFallback(content: ResumeContent, templateId: stri
             break;
           case "projects":
             if (!content.projects.length) return;
+            brk("projects#title");
             sectionTitle("项目经历");
-            content.projects.forEach((p) => {
+            content.projects.forEach((p, i) => {
+              brk(`projects#${i}`);
               inlineTitle(`${p.name}${p.company ? ` · ${p.company}` : ""} · ${p.role}`, `${p.start} - ${p.end}`);
               if (p.link) {
                 pg.space(F.small * S.lineHeight + S.lineGap);
@@ -524,8 +566,12 @@ export async function renderPdfFallback(content: ResumeContent, templateId: stri
             break;
           case "skills":
             if (!content.skills.length) return;
+            brk("skills#title");
             sectionTitle("技能");
-            content.skills.forEach((g) => skillRow(g));
+            content.skills.forEach((g, i) => {
+              brk(`skills#${i}`);
+              skillRow(g);
+            });
             break;
         }
       };

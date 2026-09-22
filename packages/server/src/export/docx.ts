@@ -46,7 +46,7 @@ const tw = (pt: number) => Math.round(pt * 20);
 // 行距：1.5 倍 = 240 * 1.5 = 360（auto 模式，与预览 lineHeight 1.5 对齐）
 const LINE_15 = { line: 360, lineRule: LineRuleType.AUTO };
 
-export async function renderDocx(content: ResumeContent, templateId: string): Promise<Buffer> {
+export async function renderDocx(content: ResumeContent, templateId: string, pageBreakIds: string[] = []): Promise<Buffer> {
   const tpl = getTemplate(templateId);
   const c = tpl.colors;
   const b = content.basic;
@@ -253,36 +253,50 @@ function buildLayout(
     tpl.sectionOrder.forEach((k) => renderSection(mainChildren, k));
     if (mainChildren.length === 0) mainChildren.push(new Paragraph({ children: [tr({ text: "（暂无内容）", size: S(F.body), color: hex(c.text) })] }));
 
-    // 侧栏/主区宽度（twips = pt × 20），与 PDF 全页 190pt 侧栏比例完全一致
+    // 侧栏/主区宽度（twips = pt × 20），与 PDF 全页侧栏比例完全一致
     const sideTw = Math.round(PRINT.sidebarWidth * 20);
     const mainTw = Math.round((PRINT.page.width - PRINT.sidebarWidth) * 20);
     const tableTw = Math.round(PRINT.page.width * 20);
     // cellPad top/bottom = 0：Word 将 cellPad 上下边距叠加在 AT_LEAST 行高之外（实测验证），
     // 40pt×2=80pt 的 cellPad 会使行高+隐含段超过页高溢出到第 2 页。
     // 改为 0 后，用首个段落的 SpaceBefore=800twips(40pt) 替代视觉顶部间距。
-    // 水平内边距 800twips(40pt) 保留，与 PDF/预览侧栏 padding 一致。
-    const cellPad = { top: 0, bottom: 0, left: 800, right: 800 };
+    // 水平内边距：侧栏用 sidebarPad(24pt=480twips)，主区保持 800twips(40pt)，
+    // 与 PDF/预览侧栏 padding 一致。
+    const sideCellPad = { top: 0, bottom: 0, left: tw(PRINT.sidebarPad), right: tw(PRINT.sidebarPad) };
+    const mainCellPad = { top: 0, bottom: 0, left: 800, right: 800 };
     const sidebarCell = new TableCell({
       width: { size: sideTw, type: WidthType.DXA },
       shading: { type: ShadingType.CLEAR, fill: hex(c.sidebar || "#1E293B"), color: "auto" },
-      margins: cellPad,
+      margins: sideCellPad,
       verticalAlign: VerticalAlign.TOP,
       children: sidebarChildren,
     });
     const mainCell = new TableCell({
       width: { size: mainTw, type: WidthType.DXA },
-      margins: cellPad,
+      margins: mainCellPad,
       verticalAlign: VerticalAlign.TOP,
       children: mainChildren,
     });
 
     // 页面高度（twips）= PRINT.page.height * 20，与 Document.section.page.size.height 保持完全一致
     const pageTw = Math.round(PRINT.page.height * 20);
-    // 双栏表格行高策略：HeightRule.ATLEAST + cellPadTB=0 + defaultFont=1pt
-    //  三重优化后，隐含空段总高 ≈ 3pt，仅需 reserve=120twips(6pt) 安全余量即可保证不溢出。
-    //  对应空内容时 rowH = 841.9 - 6 = 835.9pt → 侧栏背景从页顶铺到距页底仅 6pt 处（≈0.2cm，肉眼不可见）。
+    // 表格后显式追加一个「隐藏段落标记」的空段落（w:pPr/w:rPr/w:vanish）：
+    //  - Word 要求文档不能以表格结尾，若不显式提供段落，Word 会自动补一个按默认字号
+    //    计算行高（≈3pt）的隐含段落，迫使行高预留量变大 → 侧栏底部出现可见白边。
+    //  - 段落标记设为隐藏文本（vanish）后高度为 0，这是消除表格末尾空段的标准做法；
+    //    再叠加 EXACT 1pt 行距 + 1pt 字号双保险（仅在用户开启「显示隐藏文字」时生效）。
+    //  - 预留量因此可压缩到 1pt，侧栏背景几乎铺满整页（缺口 ≈0.35mm，肉眼不可见）。
+    const tailPara = new Paragraph({
+      run: { vanish: true, size: 2 },
+      spacing: { before: 0, after: 0, line: 20, lineRule: LineRuleType.EXACT },
+      children: [],
+    });
+    // 双栏表格行高策略：HeightRule.ATLEAST + cellPadTB=0 + defaultFont=1pt + 隐藏尾段
+    //  隐藏尾段（vanish）正常显示时高度为 0，预留仅 4 twips(0.2pt ≈ 0.07mm，低于一个
+    //  设备像素) 防止 twips 舍入导致溢出到第 2 页；侧栏背景视觉上完全贴住页底。
     //  内容多时 AT_LEAST 自动撑高，Word 默认允许行跨页拆分，不裁剪、不产生末尾空白页。
-    const reserveTw = 120; // 6pt 安全余量（隐含段≈3pt + 余量3pt）
+    //  （注：仅当用户在 Word 中手动开启「显示隐藏文字」时尾段才占 1pt，属可接受的边缘情况。）
+    const reserveTw = 4; // 0.2pt 防舍入余量
     const rowTw = pageTw - reserveTw;
     const table = new Table({
       width: { size: tableTw, type: WidthType.DXA },
@@ -291,7 +305,7 @@ function buildLayout(
       rows: [new TableRow({ height: { value: rowTw, rule: HeightRule.ATLEAST }, children: [sidebarCell, mainCell] })],
     });
 
-    return [table];
+    return [table, tailPara];
   }
 
   // 单栏布局——间距与预览/PDF 一致

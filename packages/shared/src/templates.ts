@@ -164,6 +164,7 @@ export type { ResumeContent };
 export const PRINT: {
   page: { width: number; height: number };
   margin: number;
+  sidebarPad: number;
   sidebarWidth: number;
   fontSize: Record<string, number>;
   spacing: {
@@ -192,8 +193,10 @@ export const PRINT: {
   page: { width: 595.28, height: 841.89 },
   // 单栏页边距（pt）
   margin: 40,
-  // 双栏侧边栏宽度（pt，约占 32%）
-  sidebarWidth: 190,
+  // 双栏侧边栏内边距（pt，左右）
+  sidebarPad: 24,
+  // 双栏侧边栏宽度（pt，约占 27%）
+  sidebarWidth: 160,
   // 字号（pt）
   fontSize: {
     name: 22, // 姓名（单栏标题）

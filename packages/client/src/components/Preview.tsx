@@ -41,7 +41,7 @@ function sectionLabel(k: string): string {
   )[k];
 }
 
-export default function Preview({ content, templateId, onPagesChange }: { content: ResumeContent; templateId: string; onPagesChange?: (pages: number) => void }) {
+export default function Preview({ content, templateId, onPagesChange, onPageBreaks }: { content: ResumeContent; templateId: string; onPagesChange?: (pages: number) => void; onPageBreaks?: (ids: string[]) => void }) {
   const tpl = getTemplate(templateId);
   const c = tpl.colors;
   const b = content.basic;
@@ -57,44 +57,52 @@ export default function Preview({ content, templateId, onPagesChange }: { conten
   // 测量容器理论宽度（px，96dpi）：用于反推预览区 transform:scale 缩放系数
   const measureWidthPx = (measureWidthMm / 25.4) * 96;
 
-  const renderSectionBlocks = (key: string) => {
-    const blocks: React.ReactNode[] = [];
-    const title = <SectionTitle key={key + "-t"} text={sectionLabel(key)} c={c} F={F} />;
-    blocks.push(title);
-    if (key === "summary" && b.summary)
-      lines(b.summary).forEach((l, i) => blocks.push(<P key={key + i} c={c} F={F} size={F.body}>{l}</P>));
-    else if (key === "works")
-      content.works.forEach((w) =>
-        blocks.push(
-          <WorkBlock key={w.id} title={`${w.role} · ${w.company}`} right={`${w.start} - ${w.current ? "至今" : w.end}`} desc={splitBulletLines(w.description)} c={c} F={F} />
-        )
+  // 生成一个章节的原子块列表（带稳定语义 id）。
+  // id 约定与导出器（docx/pdf）完全一致：`header`、`<section>#title`、`<section>#<序号>`。
+  // 空章节整体跳过（与导出端 `if (!length) return` 守卫对齐，避免预览多渲染空标题）。
+  const sectionBlocks = (key: string): { id: string; node: React.ReactNode }[] => {
+    const out: { id: string; node: React.ReactNode }[] = [];
+    const titleNode = <SectionTitle key={key + "-t"} text={sectionLabel(key)} c={c} F={F} />;
+    if (key === "summary") {
+      if (!b.summary) return out;
+      out.push({ id: "summary#title", node: titleNode });
+      lines(b.summary).forEach((l, i) => out.push({ id: `summary#${i}`, node: <P key={key + i} c={c} F={F} size={F.body}>{l}</P> }));
+    } else if (key === "works") {
+      if (!content.works.length) return out;
+      out.push({ id: "works#title", node: titleNode });
+      content.works.forEach((w, i) =>
+        out.push({ id: `works#${i}`, node: <WorkBlock key={w.id} title={`${w.role} · ${w.company}`} right={`${w.start} - ${w.current ? "至今" : w.end}`} desc={splitBulletLines(w.description)} c={c} F={F} /> })
       );
-    else if (key === "educations")
-      content.educations.forEach((e) =>
-        blocks.push(
-          <EduBlock key={e.id} title={`${e.school} · ${e.major} · ${e.degree}`} right={`${e.start} - ${e.end}`} desc={lines(e.description)} c={c} F={F} />
-        )
+    } else if (key === "educations") {
+      if (!content.educations.length) return out;
+      out.push({ id: "educations#title", node: titleNode });
+      content.educations.forEach((e, i) =>
+        out.push({ id: `educations#${i}`, node: <EduBlock key={e.id} title={`${e.school} · ${e.major} · ${e.degree}`} right={`${e.start} - ${e.end}`} desc={lines(e.description)} c={c} F={F} /> })
       );
-    else if (key === "projects")
-      content.projects.forEach((p) =>
-        blocks.push(
-          <ProjectBlock key={p.id} p={p} c={c} F={F} />
-        )
+    } else if (key === "projects") {
+      if (!content.projects.length) return out;
+      out.push({ id: "projects#title", node: titleNode });
+      content.projects.forEach((p, i) => out.push({ id: `projects#${i}`, node: <ProjectBlock key={p.id} p={p} c={c} F={F} /> }));
+    } else if (key === "skills") {
+      if (!content.skills.length) return out;
+      out.push({ id: "skills#title", node: titleNode });
+      content.skills.forEach((g, i) =>
+        out.push({
+          id: `skills#${i}`,
+          node: (
+            <div key={g.id} style={{ marginBottom: px(S.bodyAfter) }}>
+              <span style={{ fontWeight: 700, fontSize: pt(F.body), color: c.text, lineHeight: S.lineHeight }}>{g.category}：</span>
+              <span style={{ display: "inline-flex", flexWrap: "wrap", gap: "4px", verticalAlign: "baseline" }}>
+                {splitSkills(g.items).map((s, i) => (
+                  <span key={i} style={{ fontSize: pt(F.bullet), color: c.primary, background: soften(c.primary, 0.08), padding: `1px ${px(S.bulletAfter)}`, borderRadius: px(2), lineHeight: "1.4" }}>{s}</span>
+                ))}
+              </span>
+            </div>
+          ),
+        })
       );
-    else if (key === "skills")
-      content.skills.forEach((g) =>
-        blocks.push(
-          <div key={g.id} style={{ marginBottom: px(S.bodyAfter) }}>
-            <span style={{ fontWeight: 700, fontSize: pt(F.body), color: c.text, lineHeight: S.lineHeight }}>{g.category}：</span>
-            <span style={{ display: "inline-flex", flexWrap: "wrap", gap: "4px", verticalAlign: "baseline" }}>
-              {splitSkills(g.items).map((s, i) => (
-                <span key={i} style={{ fontSize: pt(F.bullet), color: c.primary, background: soften(c.primary, 0.08), padding: `1px ${px(S.bulletAfter)}`, borderRadius: px(2), lineHeight: "1.4" }}>{s}</span>
-              ))}
-            </span>
-          </div>
-        )
-      );
-    return blocks;
+    }
+    return out;
   };
 
   // 单栏头部：作为独立块加入分页流，确保第一页留出 header 高度（与 PDF 一致）
@@ -115,13 +123,13 @@ export default function Preview({ content, templateId, onPagesChange }: { conten
     </div>
   ) : null;
 
-  // 收集所有内容块（用于分页测量）
-  const allBlocks: { key: string; block: React.ReactNode }[] = [];
+  // 收集所有内容块（用于分页测量）。每块带稳定语义 id，导出端据此在相同边界分页。
+  const allBlocks: { key: string; id: string; block: React.ReactNode }[] = [];
   if (single && header) {
-    allBlocks.push({ key: "header", block: header });
+    allBlocks.push({ key: "header", id: "header", block: header });
   }
   tpl.sectionOrder.forEach((k) => {
-    renderSectionBlocks(k).forEach((blk, i) => allBlocks.push({ key: `${k}-${i}`, block: blk }));
+    sectionBlocks(k).forEach((x) => allBlocks.push({ key: x.id, id: x.id, block: x.node }));
   });
 
   // 分页状态：每个块高度（px），以及每页放哪些块
@@ -146,15 +154,19 @@ export default function Preview({ content, templateId, onPagesChange }: { conten
 
   // 每页可用高度（px）——按 A4 内容区 mm 换算（96dpi）
   const contentHeightPx = (PAGE_CONTENT_MM / 25.4) * 96;
+  // 安全余量：预览有效页容量略小于真实页高，保证导出端(Word/pdfkit)容量 ≥ 预览，
+  // 从而导出不会在预览判定「放得下」的页里额外溢出换页，令硬分页断点精确生效。
+  const PAGE_SLACK_PX = 8;
+  const fitHeightPx = contentHeightPx - PAGE_SLACK_PX;
 
-  // 贪心分页
+  // 贪心分页（整块不可拆分，放不下则整块移到下一页）
   const pages: number[][] = [];
   if (measured && blockHeights.length === allBlocks.length) {
     let cur: number[] = [];
     let curH = 0;
     blockHeights.forEach((h, i) => {
       const hPx = h;
-      if (cur.length > 0 && curH + hPx > contentHeightPx) {
+      if (cur.length > 0 && curH + hPx > fitHeightPx) {
         pages.push(cur);
         cur = [];
         curH = 0;
@@ -165,11 +177,21 @@ export default function Preview({ content, templateId, onPagesChange }: { conten
     if (cur.length) pages.push(cur);
   }
 
+  // 每页（除首页）首个块的 id —— 导出端在这些块前插入硬分页
+  const pageBreakIds: string[] = pages.slice(1).map((p) => allBlocks[p[0]]?.id).filter(Boolean);
+
   // 通知父组件当前页数（用于撑开预览占位高度，避免多页被截断）
   useEffect(() => {
     onPagesChange?.(pages.length || 1);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pages.length]);
+
+  // 上报分页断点（供导出端复刻相同分页）
+  const breakSig = pageBreakIds.join("|");
+  useEffect(() => {
+    onPageBreaks?.(pageBreakIds);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [breakSig]);
 
   // 双栏侧栏内容（仅在首页渲染文字，与 PDF 一致：换页时只补画背景）
   const renderSidebar = (isFirst: boolean) => (
@@ -201,7 +223,7 @@ export default function Preview({ content, templateId, onPagesChange }: { conten
     // 双栏：侧栏背景每页都画，文字仅在首页画（与 PDF 换页行为一致）
     return (
       <div style={{ width: "210mm", height: "297mm", display: "flex", background: "#fff", fontFamily: FONT_STACK, overflow: "hidden" }}>
-        <aside style={{ width: `${(PRINT.sidebarWidth / PRINT.page.width) * 100}%`, background: c.sidebar, color: "#fff", padding: mm(PRINT.margin), boxSizing: "border-box" }}>
+        <aside style={{ width: `${(PRINT.sidebarWidth / PRINT.page.width) * 100}%`, background: c.sidebar, color: "#fff", padding: mm(PRINT.sidebarPad), boxSizing: "border-box" }}>
           {isFirst && renderSidebar(true)}
         </aside>
         <main style={{ width: `${(1 - PRINT.sidebarWidth / PRINT.page.width) * 100}%`, background: "#fff", padding: mm(PRINT.margin), boxSizing: "border-box" }}>

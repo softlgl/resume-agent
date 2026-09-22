@@ -20,6 +20,7 @@ export default function Editor() {
   const [menuOpen, setMenuOpen] = useState(false);
   const [previewScale, setPreviewScale] = useState(1);
   const [previewPages, setPreviewPages] = useState(1);
+  const [previewBreakIds, setPreviewBreakIds] = useState<string[]>([]);
   const [aiPanelOpen, setAiPanelOpen] = useState(false);
   const [modelModalOpen, setModelModalOpen] = useState(false);
   const exportRef = useRef<HTMLDivElement>(null);
@@ -155,6 +156,7 @@ export default function Editor() {
 
   // Preview 通过回调上报当前页数，用于撑开预览占位高度（避免多页被截断）
   const handlePagesChange = useCallback((n: number) => setPreviewPages(n), []);
+  const handleBreaksChange = useCallback((ids: string[]) => setPreviewBreakIds(ids), []);
 
   const save = async (silent = false) => {
     setSaving(true);
@@ -193,8 +195,14 @@ export default function Editor() {
       // 导出前先保存，确保当前选中的模板与内容已写入后端
       await save(true);
       const token = getToken();
+      // 携带预览算出的分页断点，导出端在相同块边界插入硬分页（方案A：预览为准）
       const res = await fetch(api.exportUrl(id, format), {
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
+        method: "POST",
+        headers: {
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ pageBreakIds: previewBreakIds }),
       });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
@@ -470,7 +478,7 @@ export default function Editor() {
                 }}
               >
                 <div style={{ width: "210mm" }}>
-                  <Preview content={content} templateId={templateId} onPagesChange={handlePagesChange} />
+                  <Preview content={content} templateId={templateId} onPagesChange={handlePagesChange} onPageBreaks={handleBreaksChange} />
                 </div>
               </div>
             </div>
