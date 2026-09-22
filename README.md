@@ -19,9 +19,10 @@
 - **本地草稿**：编辑内容实时写入浏览器 localStorage（每份简历独立草稿），刷新页面不丢失；重新打开时草稿优先于服务端版本展示，保存后即固化。
 - **6 套模板**：经典单栏 / 现代双栏 / 极简留白 / 科技蓝 / 优雅紫 / 清新绿，支持单栏与双栏布局。
 - **实时预览**：编辑区与预览区左右分栏，预览基于与导出端完全相同的排版令牌渲染。
-- **一键导出**：导出 `.docx`；导出 `.pdf` 时优先走 DOCX → Word 转换，无 Word 环境自动降级为 PDFKit 渲染。
-- **中文排版**：内置思源黑体、宋体等字体方案，导出不乱码。
+- **一键导出**：导出 `.docx`；导出 `.pdf` 时优先走 DOCX → Word 转换，无 Word 环境自动降级为 PDFKit 渲染。导出会复用预览算出的分页断点（`pageBreakIds`），保证输出与预览逐页一致。
+- **中文排版**：DOCX 统一使用宋体（SimSun）；PDF 降级路径读取 Windows 系统字体 `STSONG.TTF`，中文不乱码。
 - **AI 简历分析**：接入 OpenAI 兼容的 LLM（云端 DeepSeek/通义千问，或本地 Ollama·LM Studio·vLLM）。输出 ATS 友好度与内容质量评分、逐条问题清单（可定位跳转到对应区块并高亮）、能力雷达图与结构化总结；写作数据自动脱敏，分析结果落库、重开可回看，问题改写支持「应用到简历」，可选结合岗位 JD 做匹配分析。
+- **多模型配置**：设置面板内可维护多套模型配置（Profile：供应商 / API Key / Base URL / 模型 / 上下文与输出上限），随时新增、修改、删除并切换激活；配置落库持久化，清空后自动回退到 `.env`。
 - **导入 Word/PDF**：支持导入 `.docx` / `.pdf` 简历，自动提取文本并经 LLM 识别为可编辑的结构化字段，预览逐字段确认后另存为新简历；文字型 PDF 直接抽文本，扫描版（图片型 PDF）自动走本地 RapidOCR 识别。
 
 ## 技术栈
@@ -51,15 +52,16 @@ resume-agent/
 │  │  │  ├─ index.ts          # 应用入口（CORS / 插件 / 路由注册）
 │  │  │  ├─ plugins/          # prisma.ts（数据库）、auth.ts（JWT 校验钩子）
 │  │  │  ├─ modules/          # auth.ts、resume.ts、export.ts、ai.ts、import.ts 路由
-│  │  │  ├─ services/         # llm.ts、extract.ts、structurize.ts、ocripy.ts
+│  │  │  ├─ services/         # llm.ts、extract.ts、structurize.ts、ocripy.ts、redact.ts
+│  │  │  ├─ types/            # 第三方库缺失类型声明（mammoth、pdfjs）
 │  │  │  └─ export/           # docx.ts、pdf.ts 渲染实现
 │  │  ├─ scripts/             # ocr.py（RapidOCR 子进程脚本）
-│  │  ├─ assets/fonts/        # 中文字体（思源黑体、宋体）
 │  │  └─ prisma/              # schema.prisma、seed.ts
 │  └─ client/                 # React 前端
 │     └─ src/
 │        ├─ pages/            # Login.tsx、Editor.tsx
-│        ├─ components/       # Preview、SectionForm、TemplatePicker、ResumeSwitcher …
+│        ├─ components/       # Preview、SectionForm、TemplatePicker、ResumeSwitcher、
+│        │                    # NewResumeDialog、ImportResumeDialog、AIAnalysisPanel、ModelManager
 │        ├─ api/client.ts     # 统一请求封装（自动携带 Bearer Token）
 │        └─ store/resume.ts   # Zustand 状态
 ├─ start.bat / stop.bat       # Windows 一键启动 / 停止
@@ -85,27 +87,33 @@ npm install
 
 ### 2. 配置环境变量
 
-在项目**根目录**创建 `.env`（后端通过 `--env-file=../../.env` 读取）：
+仓库已提供示例文件，复制一份到项目**根目录**后按实际环境修改（后端通过 `--env-file=../../.env` 读取）：
 
-```env
-# MySQL 连接串
-DATABASE_URL="mysql://root:password@localhost:3306/resume_agent"
-
-# JWT 签名密钥，生产环境务必替换为长随机字符串
-JWT_SECRET="change_me_to_a_long_random_secret_string"
-
-# 后端端口，默认 4000
-PORT=4000
-
-# 允许跨域的前端地址，多个用英文逗号分隔
-CLIENT_ORIGIN="http://localhost:5173"
-
-# --- 可选：AI 简历分析（OpenAI 兼容协议，省略则不启用 AI 分析）---
-LLM_PROVIDER="deepseek"
-LLM_BASE_URL="https://api.deepseek.com/v1"
-LLM_API_KEY="sk-xxx"
-LLM_MODEL="deepseek-chat"
+```bash
+cp .env.example .env                    # Windows PowerShell: Copy-Item .env.example .env
 ```
+
+必填项：
+
+| 变量 | 说明 |
+| --- | --- |
+| `DATABASE_URL` | MySQL 连接串，格式 `mysql://用户:密码@主机:端口/库名` |
+| `JWT_SECRET` | JWT 签名密钥，生产环境务必替换为长随机字符串 |
+| `PORT` | 后端端口，默认 `4000` |
+| `CLIENT_ORIGIN` | 允许跨域的前端地址，多个用英文逗号分隔 |
+
+可选（AI 简历分析，留空则不启用，自动降级为本地硬规则检查）：
+
+| 变量 | 说明 |
+| --- | --- |
+| `LLM_PROVIDER` | `deepseek` / `openai` / `doubao` / `qwen` / `ollama` / `lmstudio` / `vllm`，默认 `deepseek` |
+| `LLM_API_KEY` | 云端供应商必填；本地模型（ollama / lmstudio / vllm）留空 |
+| `LLM_BASE_URL` | 留空则使用该供应商默认地址（如 Ollama `http://localhost:11434/v1`） |
+| `LLM_MODEL` | 留空则使用该供应商推荐模型 |
+
+此外，导入扫描版 PDF 时可设置 `RESUME_OCR_ENV`（OCR 用 conda 环境名，默认 `resume_ocr`）与 `CONDA_EXE`（conda 可执行文件路径，默认从 PATH 查找）。
+
+> 也可跳过 `.env`，直接在应用内的「模型设置」面板中维护模型配置（落库保存、可随时切换激活）。
 
 > `.env` 已被 `.gitignore` 忽略，请勿提交。
 
@@ -173,9 +181,12 @@ npm run start --workspace=@resume-agent/server  # 运行编译后的后端
 | POST | `/resumes` | 新建简历，body：`{ title, templateId, content }` |
 | PUT | `/resumes/:id` | 更新简历，body 同上 |
 | DELETE | `/resumes/:id` | 删除简历 |
-| GET | `/export/:id/:format` | 导出文件，`format` 为 `docx` 或 `pdf` |
-| GET | `/ai/health` | LLM 是否可用 / 当前 Provider |
-| GET / POST / DELETE | `/ai/config` | 查看 / 设置 / 重置 LLM 配置（运行时覆盖 .env） |
+| POST / GET | `/export/:id/:format` | 导出文件，`format` 为 `docx` 或 `pdf`；POST 可带 `{ pageBreakIds }` 复用预览分页断点（GET 为无断点的兼容写法） |
+| GET | `/ai/health` | LLM 是否可用 / 当前生效配置摘要 |
+| GET | `/ai/config` | 模型配置列表（全部 Profile + 当前激活项）与生效配置摘要 |
+| POST | `/ai/config` | 增删改选模型 Profile，body：`{ action: 'add'\|'update'\|'remove'\|'setActive'\|'clear', ... }` |
+| DELETE | `/ai/config` | 清空所有模型 Profile（回退到 `.env` 配置） |
+| GET | `/ai/calls/latest` | 最近一次 LLM 调用日志（kind / provider / model / ok / reasoning / output） |
 | POST | `/ai/analyze` | 简历分析；`streaming:true` 时返回 SSE（逐字思考过程 + 输出内容），带 `jd` 做岗位匹配，带 `resumeId` 结果落库 |
 | PATCH | `/ai/analyze/:resumeId/applied` | 把分析结果中某条建议标记为「已应用」（body：`{ section, index }`，写回 `Resume.analysis`） |
 | POST | `/import/parse` | 上传 `.docx`/`.pdf` 解析为结构化内容（multipart，≤20MB），SSE 返回识别过程 |
@@ -199,6 +210,7 @@ npm run start --workspace=@resume-agent/server  # 运行编译后的后端
 - **PDF**：优先生成 DOCX 后调用本机 **Microsoft Word（COM）** 另存为 PDF，版式与 Word 完全一致；
   非 Windows 或未安装 Word 时，自动降级为 **PDFKit** 坐标布局渲染，字体读取 `C:\Windows\Fonts\STSONG.TTF`。
 - 下载文件名支持中文（同时输出 `filename` 与 `filename*=UTF-8''` 两种形式）。
+- **分页一致性**：预览会计算分页断点（块级 id）并在导出请求中提交，导出端在这些块前插入硬分页，使导出文件的每页内容与网页预览一致。
 
 ## 常见问题
 
