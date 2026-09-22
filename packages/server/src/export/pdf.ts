@@ -233,8 +233,12 @@ export async function renderPdfFallback(content: ResumeContent, templateId: stri
       };
       const advance = (toY: number) => { pg.setY(Math.max(toY, pg.y())); };
 
+      // 与 DOCX/预览对齐：预览中各块被 flow-root 包裹、margin 不折叠（blockAfter+sectionBefore 叠加），
+      // 这里 pdfkit 是直接累加坐标，也需把前置块间距补进章节标题前；首个章节除外。
+      let firstSection = true;
       const sectionTitle = (txt: string) => {
-        pg.space(F.sectionTitle * S.lineHeight + S.sectionBefore);
+        pg.space(F.sectionTitle * S.lineHeight + S.sectionBefore + (firstSection ? 0 : S.blockAfter));
+        firstSection = false;
         const tY = pg.y();
         doc.save();
         doc.rect(mx, tY, 4, F.sectionTitle).fill(c.primary);
@@ -272,7 +276,7 @@ export async function renderPdfFallback(content: ResumeContent, templateId: stri
         pg.space(F.body * S.lineHeight + S.lineGap);
         const rowY = pg.y();
         doc.font("CJK").fontSize(F.body).fillColor(c.text);
-        const categoryLabel = `${g.category}：`;
+        const categoryLabel = `${g.category} ：`;
         const categoryWidth = doc.widthOfString(categoryLabel);
         doc.text(categoryLabel, mx, rowY, { width: mw, lineBreak: false });
         const skills = splitSkills(g.items);
@@ -439,8 +443,10 @@ export async function renderPdfFallback(content: ResumeContent, templateId: stri
       }
       pg.setY(Math.max(pg.y(), headerBottom));
 
+      let firstSection = true;
       const sectionTitle = (txt: string) => {
-        pg.space(F.sectionTitle * S.lineHeight + S.sectionBefore);
+        pg.space(F.sectionTitle * S.lineHeight + S.sectionBefore + (firstSection ? 0 : S.blockAfter));
+        firstSection = false;
         const tY = pg.y();
         doc.save();
         doc.rect(x, tY, 4, F.sectionTitle).fill(c.primary);
@@ -478,7 +484,7 @@ export async function renderPdfFallback(content: ResumeContent, templateId: stri
         pg.space(F.body * S.lineHeight + S.lineGap);
         const rowY = pg.y();
         doc.font("CJK").fontSize(F.body).fillColor(c.text);
-        const categoryLabel = `${g.category}：`;
+        const categoryLabel = `${g.category} ：`;
         const categoryWidth = doc.widthOfString(categoryLabel);
         doc.text(categoryLabel, x, rowY, { width: cw, lineBreak: false });
         const skills = splitSkills(g.items);

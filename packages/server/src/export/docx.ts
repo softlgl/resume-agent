@@ -52,16 +52,56 @@ export async function renderDocx(content: ResumeContent, templateId: string, pag
   const b = content.basic;
   const F = PRINT.fontSize;
 
-  const sectionTitle = (text: string) =>
-    new Paragraph({
-      children: [tr({ text, bold: true, size: S(F.sectionTitle), color: hex(c.primary) })],
-      border: {
-        bottom: { style: BorderStyle.SINGLE, size: 6, color: hex(c.line), space: 2 },
-        left: { style: BorderStyle.SINGLE, size: 24, color: hex(c.primary), space: 6 },
+  // 章节标题：左竖条 + 下划线，用「1 行 2 列表格」实现（窄列填充主色=竖条，文字列带下边框=下划线）。
+  // 不用段落左边框：Word/WPS 的段落边框覆盖整个段落框（随行距、border space 变化），
+  // 竖条高度不可控（曾远高于文字）；表格单元格底色严格等于行高，竖条高度稳定且与文字一致。
+  // 表格自身没有 spacing，前后用 EXACT 行高的空段落占位承载章节间距
+  // （空段落默认字号 1pt，高度即 EXACT 行距值）；首个章节不留 blockAfter（上方是页首留白/头部带）。
+  const sectionTitle = (text: string, first = false): any[] => {
+    const spacer = (h: number) =>
+      new Paragraph({ spacing: { before: 0, after: 0, line: h, lineRule: LineRuleType.EXACT }, children: [] });
+    // 主内容区宽度（twips）：双栏=主栏宽-主栏单元格左右边距(800×2)；单栏=页宽-左右页边距
+    const contentW =
+      tpl.layout === "two-column" && tpl.sidebarBasic
+        ? Math.round((PRINT.page.width - PRINT.sidebarWidth) * 20) - 1600
+        : Math.round((PRINT.page.width - PRINT.margin * 2) * 20);
+    const barW = 40; // 竖条宽 2pt（与预览竖条宽度一致）
+    const titleTable = new Table({
+      width: { size: contentW, type: WidthType.DXA },
+      columnWidths: [barW, contentW - barW],
+      borders: {
+        top: { style: BorderStyle.NONE }, bottom: { style: BorderStyle.NONE },
+        left: { style: BorderStyle.NONE }, right: { style: BorderStyle.NONE },
+        insideHorizontal: { style: BorderStyle.NONE }, insideVertical: { style: BorderStyle.NONE },
       },
-      indent: { left: 80 },
-      spacing: { before: tw(SP.sectionBefore), after: tw(SP.sectionAfter), ...LINE_15 },
+      rows: [
+        new TableRow({
+          children: [
+            // 竖条列：主色填充，高度=行高（=文字列行高）
+            new TableCell({
+              width: { size: barW, type: WidthType.DXA },
+              shading: { type: ShadingType.CLEAR, fill: hex(c.primary), color: "auto" },
+              margins: { top: 0, bottom: 0, left: 0, right: 0 },
+              children: [new Paragraph({ spacing: { before: 0, after: 0, line: 20, lineRule: LineRuleType.EXACT }, children: [] })],
+            }),
+            // 文字列：标题文字 + 底边框下划线；EXACT 15.5pt 行高压紧行高（13pt 宋体加粗可容纳）
+            new TableCell({
+              width: { size: contentW - barW, type: WidthType.DXA },
+              margins: { top: 0, bottom: 0, left: 80, right: 0 },
+              borders: { bottom: { style: BorderStyle.SINGLE, size: 6, color: hex(c.line) } },
+              children: [
+                new Paragraph({
+                  children: [tr({ text, bold: true, size: S(F.sectionTitle), color: hex(c.primary) })],
+                  spacing: { before: 0, after: 0, line: 310, lineRule: LineRuleType.EXACT },
+                }),
+              ],
+            }),
+          ],
+        }),
+      ],
     });
+    return [spacer(tw(SP.sectionBefore + (first ? 0 : SP.blockAfter))), titleTable, spacer(tw(SP.sectionAfter))];
+  };
 
   const body = (text: string, opts: any = {}) =>
     new Paragraph({ children: [tr({ text, size: S(F.body), color: hex(c.text), ...opts })], spacing: { after: tw(SP.bodyAfter), ...LINE_15 } });
@@ -72,12 +112,12 @@ export async function renderDocx(content: ResumeContent, templateId: string, pag
     switch (key) {
       case "summary":
         if (!content.basic.summary) return;
-        children.push(sectionTitle("个人简介"));
+        children.push(...sectionTitle("个人简介", children.length === 0));
         lines(content.basic.summary).forEach((l) => children.push(body(l)));
         break;
       case "works":
         if (!content.works.length) return;
-        children.push(sectionTitle("工作经历"));
+        children.push(...sectionTitle("工作经历", children.length === 0));
         content.works.forEach((w, i) => {
           children.push(
             new Paragraph({
@@ -99,7 +139,7 @@ export async function renderDocx(content: ResumeContent, templateId: string, pag
         break;
       case "educations":
         if (!content.educations.length) return;
-        children.push(sectionTitle("教育经历"));
+        children.push(...sectionTitle("教育经历", children.length === 0));
         content.educations.forEach((e, i) => {
           children.push(
             new Paragraph({
@@ -116,7 +156,7 @@ export async function renderDocx(content: ResumeContent, templateId: string, pag
         break;
       case "projects":
         if (!content.projects.length) return;
-        children.push(sectionTitle("项目经历"));
+        children.push(...sectionTitle("项目经历", children.length === 0));
         content.projects.forEach((p, i) => {
           children.push(
             new Paragraph({
@@ -138,13 +178,22 @@ export async function renderDocx(content: ResumeContent, templateId: string, pag
         break;
       case "skills":
         if (!content.skills.length) return;
-        children.push(sectionTitle("技能"));
+        children.push(...sectionTitle("技能", children.length === 0));
         content.skills.forEach((g) => {
-          // 技能胶囊：分类加粗 + 每个技能一个 softShading run（与预览/PDF 一致）
-          const runs: any[] = [tr({ text: `${g.category}：`, bold: true, size: S(F.body), color: hex(c.text) })];
+          // 技能胶囊：分类加粗 + 每个技能一个 softShading run（与预览/PDF 一致）。
+          // SimSun 全角冒号字形紧贴前一字符（0 间距过挤），直接插半角空格（5pt）又过宽，
+          // 故用小字号空格精确控制——半角空格宽度 = 字号的一半：
+          // 分类与冒号之间 2.5pt（5pt 字号空格），冒号与胶囊之间 1pt（2pt 字号空格）。
+          const gapBeforeColon = () => tr({ text: " ", size: S(5) });
+          const gapBeforeCapsule = () => tr({ text: " ", size: S(2) });
+          const runs: any[] = [
+            tr({ text: g.category, bold: true, size: S(F.body), color: hex(c.text) }),
+            gapBeforeColon(),
+            tr({ text: "：", bold: true, size: S(F.body), color: hex(c.text) }),
+          ];
           splitSkills(g.items).forEach((s) => {
+            runs.push(gapBeforeCapsule());
             runs.push(tr({ text: ` ${s} `, size: S(F.bullet), color: hex(c.primary), shading: { type: ShadingType.SOLID, fill: hex(soften(c.primary, 0.08)), color: hex(soften(c.primary, 0.08)) } }));
-            runs.push(tr({ text: " ", size: S(F.bullet) }));
           });
           children.push(
             new Paragraph({
@@ -257,13 +306,16 @@ function buildLayout(
     const sideTw = Math.round(PRINT.sidebarWidth * 20);
     const mainTw = Math.round((PRINT.page.width - PRINT.sidebarWidth) * 20);
     const tableTw = Math.round(PRINT.page.width * 20);
-    // cellPad top/bottom = 0：Word 将 cellPad 上下边距叠加在 AT_LEAST 行高之外（实测验证），
-    // 40pt×2=80pt 的 cellPad 会使行高+隐含段超过页高溢出到第 2 页。
-    // 改为 0 后，用首个段落的 SpaceBefore=800twips(40pt) 替代视觉顶部间距。
+    // 上下留白：主区单元格加 top/bottom padding（= PRINT.margin，40pt），
+    // 避免正文首行贴近页面顶端、满页时末行贴页底。侧栏 cellPad 上下保持 0，
+    // 用首个段落的 SpaceBefore=800twips(40pt) 提供视觉顶部间距，深色背景仍贴页顶。
+    // Word 会把 cellPad 上下边距叠加在 AT_LEAST 行高之外，因此下方 rowTw 需等量扣减，
+    // 否则行高+隐含段超过页高会溢出到第 2 页（且侧栏底部出现白边）。
     // 水平内边距：侧栏用 sidebarPad(24pt=480twips)，主区保持 800twips(40pt)，
     // 与 PDF/预览侧栏 padding 一致。
+    const mainPadV = PRINT.margin;
     const sideCellPad = { top: 0, bottom: 0, left: tw(PRINT.sidebarPad), right: tw(PRINT.sidebarPad) };
-    const mainCellPad = { top: 0, bottom: 0, left: 800, right: 800 };
+    const mainCellPad = { top: tw(mainPadV), bottom: tw(mainPadV), left: 800, right: 800 };
     const sidebarCell = new TableCell({
       width: { size: sideTw, type: WidthType.DXA },
       shading: { type: ShadingType.CLEAR, fill: hex(c.sidebar || "#1E293B"), color: "auto" },
@@ -297,7 +349,9 @@ function buildLayout(
     //  内容多时 AT_LEAST 自动撑高，Word 默认允许行跨页拆分，不裁剪、不产生末尾空白页。
     //  （注：仅当用户在 Word 中手动开启「显示隐藏文字」时尾段才占 1pt，属可接受的边缘情况。）
     const reserveTw = 4; // 0.2pt 防舍入余量
-    const rowTw = pageTw - reserveTw;
+    // 行高 = 页高 - 主区上下 cellPad - 余量：cellPad 被等量扣减后，
+    // 主区实际内容高度不变，侧栏背景仍几乎铺满整页（缺口 ≈0.35mm，肉眼不可见）。
+    const rowTw = pageTw - reserveTw - tw(mainPadV) * 2;
     const table = new Table({
       width: { size: tableTw, type: WidthType.DXA },
       columnWidths: [sideTw, mainTw],
