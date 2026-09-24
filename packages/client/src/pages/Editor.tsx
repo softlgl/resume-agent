@@ -9,7 +9,156 @@ import ResumeSwitcher from "../components/ResumeSwitcher";
 import AIAnalysisPanel from "../components/AIAnalysisPanel";
 import ModelManager from "../components/ModelManager";
 import { FileDown, Save, Check, LogOut, LayoutTemplate, Sparkles, Settings, X } from "lucide-react";
-import type { WorkExp, EduExp, ProjectExp, SkillGroup } from "@resume-agent/shared";
+import type { WorkExp, EduExp, ProjectExp, SkillGroup, AiRevisionRecord, EditSection, ResumeEdit } from "@resume-agent/shared";
+import type { ApplyResult } from "../components/EditCard";
+import { fieldToLabel } from "../utils/fieldLabel";
+
+// ---------------------------------------------------------------------------
+// AI 修改应用：可写的顶层 section + 新增条目时的完整骨架
+// ---------------------------------------------------------------------------
+const TOP_SECTIONS = ["basic", "works", "educations", "projects", "skills"] as const;
+
+type EditableSection = Exclude<EditSection, "basic">;
+
+const APPEND_EMPTY: Record<EditableSection, () => Record<string, any>> = {
+  works: () => ({ id: "", company: "", role: "", start: "", end: "", current: false, description: "" }),
+  educations: () => ({ id: "", school: "", major: "", degree: "", start: "", end: "", description: "" }),
+  projects: () => ({ id: "", name: "", company: "", role: "", start: "", end: "", link: "", description: "" }),
+  skills: () => ({ id: "", category: "", items: "" }),
+};
+
+function uid(): string {
+  return Math.random().toString(36).slice(2) + Date.now().toString(36);
+}
+
+// 仅认自有属性（挡住 __proto__ / constructor 等原型链键）
+function hasOwn(obj: any, key: string): boolean {
+  return Object.prototype.hasOwnProperty.call(obj, key);
+}
+
+// "2023-03" / "2023年3月" / "2023.3" → 202303；识别不出（如空值）返回 -1
+function startWeight(v: unknown): number {
+  const m = /(\d{4})\D{0,3}(\d{1,2})?/.exec(typeof v === "string" ? v : "");
+  if (!m) return -1;
+  return Number(m[1]) * 100 + (m[2] ? Number(m[2]) : 0);
+}
+
+// 按开始时间倒序（最近的在最前）；时间相同的保持原顺序
+function sortByStartDesc<T>(list: T[]): T[] {
+  return [...list].sort((a: any, b: any) => startWeight(b?.start) - startWeight(a?.start));
+}
+
+interface ParsedField {
+  section: EditSection;
+  index: number | null;
+  key: string | null;
+}
+
+// 与后端 services/resume-edit.ts 的 parseFieldPath 同口径
+const FIELD_RE = /^(basic|works|educations|projects|skills)(?:\[(\d+)\])?(?:\.([A-Za-z0-9_]+))?$/;
+function resolveField(field: string): ParsedField | null {
+  const m = FIELD_RE.exec((field || "").trim());
+  if (!m) return null;
+  return {
+    section: m[1] as EditSection,
+    index: m[2] === undefined ? null : Number(m[2]),
+    key: m[3] ?? null,
+  };
+}
+
+interface BuiltRecord {
+  op: "set" | "append";
+  section: string;
+  field: string;
+  label: string;
+  beforeValue: string | null;
+  afterValue: string | null;
+  itemId: string | null;
+}
+
+// 在副本上逐条应用 edits，同时产出记账所需的 before/after。
+// 安全顺序：先全部 set（不改数组长度），再全部 append（只追加尾部）→ 下标始终稳定。
+// 前端二次防御：路径必须可解析、目标必须已存在且是文本字段（挡住 __proto__、布尔字段、
+// 越界下标、把整段 section 覆写成字符串等情况）。
+function buildDraft(
+  live: any,
+  edits: ResumeEdit[]
+): { draft: any; records: BuiltRecord[] } | { error: string } {
+  const draft = structuredClone(live);
+  const records: BuiltRecord[] = [];
+
+  for (const e of edits.filter((x) => x.op === "set")) {
+    const parsed = resolveField(e.field || "");
+    if (!parsed || !parsed.key) return { error: `无法解析字段路径：${e.field || "空"}` };
+
+    if (parsed.section === "basic") {
+      if (parsed.index !== null) return { error: "基本信息不支持下标" };
+      if (!hasOwn(draft.basic ?? {}, parsed.key)) {
+        return { error: `字段不存在：basic.${parsed.key}` };
+      }
+      if (typeof draft.basic[parsed.key] !== "string") {
+        return { error: `字段 basic.${parsed.key} 不是文本字段，不能改写` };
+      }
+      const before = String(draft.basic[parsed.key] ?? "");
+      draft.basic[parsed.key] = e.after ?? "";
+      records.push({
+        op: "set",
+        section: "basic",
+        field: `basic.${parsed.key}`,
+        label: e.label,
+        beforeValue: before,
+        afterValue: e.after ?? "",
+        itemId: null,
+      });
+      continue;
+    }
+
+    const list = draft[parsed.section];
+    if (!Array.isArray(list) || parsed.index === null || !list[parsed.index]) {
+      return { error: `条目不存在：${e.field}` };
+    }
+    const target = list[parsed.index];
+    if (!hasOwn(target, parsed.key) || typeof target[parsed.key] !== "string") {
+      return { error: `字段 ${e.field} 不是文本字段，不能改写` };
+    }
+    const before = String(target[parsed.key] ?? "");
+    target[parsed.key] = e.after ?? "";
+    records.push({
+      op: "set",
+      section: parsed.section,
+      field: e.field!,
+      label: e.label,
+      beforeValue: before,
+      afterValue: e.after ?? "",
+      itemId: null,
+    });
+  }
+
+  for (const e of edits.filter((x) => x.op === "append")) {
+    const section = e.section as EditableSection;
+    const list = draft[section];
+    if (!Array.isArray(list)) return { error: `不支持向「${e.section}」新增条目` };
+    const itemId = e.itemId || uid();
+    const item = { ...(APPEND_EMPTY[section]?.() ?? {}), ...(e.item ?? {}), id: itemId };
+    list.push(item);
+    records.push({
+      op: "append",
+      section: e.section,
+      field: e.section,
+      label: e.label,
+      beforeValue: null,
+      afterValue: null,
+      itemId,
+    });
+  }
+
+  // 新增过条目的 section 按开始时间倒序重排，避免新经历总落在最后
+  for (const section of new Set(edits.filter((x) => x.op === "append").map((x) => x.section))) {
+    if (Array.isArray(draft[section])) draft[section] = sortByStartDesc(draft[section]);
+  }
+
+  return { draft, records };
+}
 
 export default function Editor() {
   const { id, title, templateId, content, setField, setTitle, setTemplate, load, loadResume, loadList, toInput, markSaved } =
@@ -23,6 +172,8 @@ export default function Editor() {
   const [previewBreakIds, setPreviewBreakIds] = useState<string[]>([]);
   const [aiPanelOpen, setAiPanelOpen] = useState(false);
   const [modelModalOpen, setModelModalOpen] = useState(false);
+  // 修改账本刷新信号：应用 / 撤销后自增，驱动 RevisionHistory 重新拉取
+  const [revisionsRefreshKey, setRevisionsRefreshKey] = useState(0);
   const exportRef = useRef<HTMLDivElement>(null);
   const previewAreaRef = useRef<HTMLDivElement>(null);
   const navigate = useNavigate();
@@ -31,62 +182,144 @@ export default function Editor() {
 
   const basic = content.basic;
 
+  const bumpRevisions = useCallback(() => setRevisionsRefreshKey((v) => v + 1), []);
+
   // ---------------------------------------------------------------------------
-  // AI 改写应用：根据 path（如 works[0].description）定位并替换 content 中对应字段
+  // AI 修改应用 → 保存 → 记入修订账本（AI 只给建议，是否应用由用户点击决定）
   // ---------------------------------------------------------------------------
-  const applyByPath = useCallback((field: string, newValue: string) => {
-    if (!field) return;
-    // 解析 path：把 "works[0].description" 拆成 ["works", 0, "description"]
-    const tokens: (string | number)[] = [];
-    let buf = "";
-    for (let i = 0; i < field.length; i++) {
-      const c = field[i];
-      if (c === ".") {
-        if (buf) tokens.push(buf);
-        buf = "";
-      } else if (c === "[") {
-        if (buf) tokens.push(buf);
-        buf = "";
-      } else if (c === "]") {
-        if (buf) tokens.push(parseInt(buf, 10));
-        buf = "";
+  const applyEdits = useCallback(
+    async (
+      edits: ResumeEdit[],
+      source: "chat" | "analysis"
+    ): Promise<{ ok: true; records: BuiltRecord[] } | { ok: false; error: string }> => {
+      if (!id) return { ok: false, error: "请先保存简历，再应用 AI 建议" };
+
+      const live = useResumeStore.getState().content;
+      const built = buildDraft(live, edits);
+      if ("error" in built) return { ok: false, error: built.error };
+      if (built.records.length === 0) return { ok: false, error: "没有可应用的修改" };
+
+      const { draft, records } = built;
+      // 只对真正变化的 section 调 setField（避免无谓的草稿写入与重渲染）
+      for (const key of TOP_SECTIONS) {
+        if (JSON.stringify(draft[key]) !== JSON.stringify(live[key])) {
+          setField(key, draft[key] as any);
+        }
+      }
+
+      const saved = await save(true);
+      if (!saved) return { ok: false, error: "保存失败，修改未写入简历" };
+
+      for (const r of records) {
+        try {
+          await api.createRevision({
+            resumeId: id,
+            source,
+            op: r.op,
+            section: r.section,
+            field: r.field,
+            label: r.label,
+            beforeValue: r.beforeValue,
+            afterValue: r.afterValue,
+            itemId: r.itemId,
+            sessionId: null,
+            messageId: null,
+          });
+        } catch {
+          /* 记账失败不影响已应用的修改，撤销入口最多少一条 */
+        }
+      }
+      bumpRevisions();
+      return { ok: true, records };
+    },
+    [id, setField, bumpRevisions]
+  );
+
+  // 对话侧：单条修改
+  const applyEdit = useCallback(
+    async (edit: ResumeEdit): Promise<ApplyResult> => {
+      const res = await applyEdits([edit], "chat");
+      if (!res.ok) return { ok: false, error: res.error };
+      const r = res.records[0];
+      return {
+        ok: true,
+        label: r?.label ?? edit.label,
+        field: r?.field ?? edit.field ?? edit.section,
+        beforeValue: r?.beforeValue ?? null,
+        afterValue: r?.afterValue ?? null,
+        itemId: r?.itemId ?? null,
+      };
+    },
+    [applyEdits]
+  );
+
+  // 分析侧：把某个字段改写成建议内容
+  const applyIssue = useCallback(
+    async (field: string, rewrite: string): Promise<ApplyResult> => {
+      const parsed = resolveField(field);
+      if (!parsed) return { ok: false, error: `无法解析字段路径：${field}` };
+      const edit: ResumeEdit = {
+        op: "set",
+        section: parsed.section,
+        field,
+        label: fieldToLabel(field),
+        after: rewrite,
+      };
+      return applyEdit(edit);
+    },
+    [applyEdit]
+  );
+
+  // ---------------------------------------------------------------------------
+  // 撤销一次已应用的修改（账本记录只允许撤销最新一条未撤销的，规则在服务端与列表 UI 统一）
+  // ---------------------------------------------------------------------------
+  const revertRevision = useCallback(
+    async (r: AiRevisionRecord): Promise<boolean> => {
+      if (!id) return false;
+      const live = useResumeStore.getState().content;
+      const draft = structuredClone(live);
+
+      if (r.op === "set") {
+        const parsed = resolveField(r.field);
+        if (!parsed || !parsed.key) {
+          alert("该字段路径已失效，无法撤销");
+          return false;
+        }
+        const target: any =
+          parsed.section === "basic" ? draft.basic : draft[parsed.section]?.[parsed.index as number];
+        if (!target || !hasOwn(target, parsed.key)) {
+          alert("该字段已不存在，无需撤销");
+          return false;
+        }
+        if (String(target[parsed.key] ?? "") !== String(r.afterValue ?? "")) {
+          if (!confirm("该字段在应用之后被改过，仍要回滚到修改前的内容吗？")) return false;
+        }
+        target[parsed.key] = r.beforeValue ?? "";
       } else {
-        buf += c;
+        const list = (draft as any)[r.section];
+        if (!Array.isArray(list)) return false;
+        const idx = list.findIndex((it: any) => it?.id === r.itemId);
+        if (idx < 0) {
+          alert("该条目已被删除，无需撤销");
+          return false;
+        }
+        list.splice(idx, 1);
       }
-    }
-    if (buf) tokens.push(buf);
-    if (tokens.length === 0) return;
 
-    const topKey = tokens[0] as keyof typeof content;
-    const rest = tokens.slice(1);
+      setField(r.section as any, (draft as any)[r.section] as any);
+      const saved = await save(true);
+      if (!saved) return false;
 
-    if (rest.length === 0) {
-      // 顶层字段：直接 setField。
-      // 但顶层键(basic/works/educations/projects/skills)都是对象或数组，绝非字符串。
-      // 若 AI 把整段 section 改写(如 field="works"、rewrite=一段文本)当作新值下发，
-      // 这里一旦 setField(topKey, 纯文本) 会把数组/对象覆写成字符串，导致渲染崩溃。
-      // 故仅当新值与现有顶层值同类型(字符串→字符串)时才覆盖；容器型顶层一律跳过。
-      if (typeof content[topKey] === "string") {
-        setField(topKey, newValue as any);
-        return;
+      try {
+        await api.markRevisionReverted(r.id);
+      } catch {
+        /* 记为已撤销失败：简历已回滚，下次仍可重试 */
       }
-      console.warn(`[applyByPath] 忽略对顶层容器字段 ${String(topKey)} 的改写：不能把文本赋给数组/对象`, newValue);
-      return;
-    }
-
-    // 否则 clone 顶层，逐层深入替换
-    const clone = structuredClone(content[topKey]);
-    // 深入到倒数第二层
-    let cur: any = clone;
-    for (let i = 0; i < rest.length - 1; i++) {
-      cur = cur[rest[i] as any];
-    }
-    // 在最后一层赋值
-    const last = rest[rest.length - 1];
-    cur[last as any] = newValue;
-
-    setField(topKey, clone as any);
-  }, [content, setField]);
+      bumpRevisions();
+      return true;
+    },
+    [id, setField, bumpRevisions]
+  );
 
   // ---------------------------------------------------------------------------
   // AI 面板点击字段定位：滚动到对应 section → 高亮闪烁（不关闭面板，用户可手动点 X 关闭）
@@ -158,7 +391,8 @@ export default function Editor() {
   const handlePagesChange = useCallback((n: number) => setPreviewPages(n), []);
   const handleBreaksChange = useCallback((ids: string[]) => setPreviewBreakIds(ids), []);
 
-  const save = async (silent = false) => {
+  // 返回是否真正保存成功：应用 AI 修改时需「先保存成功，再记账」，避免账本与实际内容漂移
+  const save = async (silent = false): Promise<boolean> => {
     setSaving(true);
     try {
       const input = toInput();
@@ -177,8 +411,10 @@ export default function Editor() {
         setSavedFlash(true);
         setTimeout(() => setSavedFlash(false), 1500);
       }
+      return true;
     } catch (err: any) {
       alert(err.message);
+      return false;
     } finally {
       setSaving(false);
     }
@@ -491,11 +727,11 @@ export default function Editor() {
         onClose={() => setAiPanelOpen(false)}
         content={content}
         resumeId={id}
-        onApply={(field, value) => {
-          applyByPath(field, value);
-          // 应用改写后自动保存（toInput 实时读 store，能拿到应用后的最新值），确保改写真正落库
-          if (!saving) save(true);
-        }}
+        onApplyIssue={applyIssue}
+        onApplyEdit={applyEdit}
+        onRevert={revertRevision}
+        revisionsRefreshKey={revisionsRefreshKey}
+        onRefreshRevisions={bumpRevisions}
         onGoto={gotoSection}
       />
 

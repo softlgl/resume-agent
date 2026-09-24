@@ -1,7 +1,12 @@
 import { useState, useEffect, useCallback } from "react";
-import { Sparkles, X, AlertTriangle, AlertCircle, Lightbulb, TrendingUp, Brain, RefreshCw, Settings, Check, CornerDownRight, Braces } from "lucide-react";
+import { Sparkles, X, AlertTriangle, AlertCircle, Lightbulb, TrendingUp, Brain, RefreshCw, Settings, Check, CornerDownRight, Braces, MessagesSquare, ScanSearch, Wand2, RotateCcw } from "lucide-react";
 import { api } from "../api/client";
 import ModelManager from "./ModelManager";
+import ChatPanel from "./ChatPanel";
+import RevisionHistory from "./RevisionHistory";
+import type { ApplyResult } from "./EditCard";
+import { fieldToLabel } from "../utils/fieldLabel";
+import type { AiRevisionRecord, ResumeEdit } from "@resume-agent/shared";
 
 // 前端 Issue 类型（和后端对齐）
 interface Issue {
@@ -55,7 +60,15 @@ interface Props {
   onClose: () => void;
   content: any;
   resumeId: string | null;
-  onApply?: (field: string, rewrite: string) => void;
+  // 应用一条分析建议的改写（内部会保存 + 记入修订账本）
+  onApplyIssue: (field: string, rewrite: string) => Promise<ApplyResult>;
+  // 应用一条对话产生的修改
+  onApplyEdit: (edit: ResumeEdit) => Promise<ApplyResult>;
+  // 撤销一笔账本记录
+  onRevert: (r: AiRevisionRecord) => Promise<boolean>;
+  // 账本刷新信号（应用 / 撤销后自增）
+  revisionsRefreshKey: number;
+  onRefreshRevisions: () => void;
   onGoto?: (field: string) => void; // 点击字段定位 → 跳转编辑器对应 section
 }
 
@@ -72,46 +85,6 @@ const SECTION_LABELS: Record<string, string> = {
   projects: "项目经历",
   skills: "技能",
 };
-
-// 字段中文名映射：works[0].end → 「工作经历·第 1 条·结束时间」
-const FIELD_LABELS: Record<string, string> = {
-  name: "姓名",
-  title: "求职意向",
-  phone: "手机号",
-  email: "邮箱",
-  city: "所在城市",
-  expectedSalary: "期望薪资",
-  workYears: "工作年限",
-  summary: "个人简介",
-  avatar: "头像",
-  company: "公司名称",
-  role: "职位",
-  start: "开始时间",
-  end: "结束时间",
-  current: "是否至今",
-  description: "描述",
-  school: "学校",
-  major: "专业",
-  degree: "学历",
-  nameProject: "项目名称",
-  link: "项目链接",
-};
-
-// 把 JSON 路径转成中文可读定位文本
-function fieldToLabel(field: string): string {
-  if (!field) return "";
-  // 优先取顶层 section 名
-  const top = field.split(/[.\[\]]+/)[0];
-  const section = SECTION_LABELS[top] || top;
-  // 取出数组索引，如 works[0] → 第1条
-  const m = field.match(/\[(\d+)\]/);
-  const idxPart = m ? `· 第${Number(m[1]) + 1}条` : "";
-  // 取出末尾字段名
-  const tokens = field.split(/[.\[\]]+/).filter(Boolean);
-  const lastKey = tokens[tokens.length - 1];
-  const fieldName = FIELD_LABELS[lastKey] || lastKey;
-  return `${section}${idxPart} · ${fieldName}`;
-}
 
 function ScoreCard({ label, score, color }: { label: string; score: number; color: string }) {
   const pct = Math.max(0, Math.min(100, score));
@@ -164,57 +137,142 @@ function SeverityIcon({ severity }: { severity: Issue["severity"] }) {
   return <Lightbulb size={14} className="text-sky-500 shrink-0 mt-0.5" />;
 }
 
-function IssueList({ issues, section, onApply, onApplied, onGoto }: { issues: Issue[]; section: string; onApply?: (field: string, rewrite: string) => void; onApplied?: (section: string, index: number) => void; onGoto?: (field: string) => void }) {
-  if (issues.length === 0) return <div className="text-xs text-slate-400">✓ 没有明显问题</div>;
+function IssueList({
+  issues,
+  section,
+  onApplyIssue,
+  onApplied,
+  onGoto,
+  onAsk,
+  revertibleField,
+  onRevertIssue,
+}: {
+  issues: Issue[];
+  section: string;
+  onApplyIssue?: (field: string, rewrite: string) => Promise<ApplyResult>;
+  onApplied?: (section: string, index: number, applied: boolean) => void;
+  onGoto?: (field: string) => void;
+  onAsk?: (issue: Issue) => void;
+  // 当前允许撤销的分析类建议字段（只允许撤销账本里最新一条未撤销记录）
+  revertibleField?: string | null;
+  onRevertIssue?: (issue: Issue) => Promise<void>;
+}) {
   const [appliedIdx, setAppliedIdx] = useState<Set<number>>(new Set());
+  const [busyIdx, setBusyIdx] = useState<number | null>(null);
+  const [errMsg, setErrMsg] = useState<string | null>(null);
+
+  if (issues.length === 0) return <div className="text-xs text-slate-400">✓ 没有明显问题</div>;
+
+  const goApply = async (it: Issue, i: number) => {
+    if (!it.field || !it.rewrite) return;
+    setBusyIdx(i);
+    setErrMsg(null);
+    try {
+      const res = await onApplyIssue?.(it.field, it.rewrite);
+      if (res && !res.ok) {
+        setErrMsg(res.error);
+        return;
+      }
+      setAppliedIdx((s) => new Set(s).add(i));
+      onApplied?.(section, i, true);
+    } finally {
+      setBusyIdx(null);
+    }
+  };
+
+  const goRevert = async (it: Issue, i: number) => {
+    if (!onRevertIssue) return;
+    setBusyIdx(i);
+    setErrMsg(null);
+    try {
+      await onRevertIssue(it);
+      setAppliedIdx((s) => {
+        const n = new Set(s);
+        n.delete(i);
+        return n;
+      });
+      onApplied?.(section, i, false);
+    } finally {
+      setBusyIdx(null);
+    }
+  };
+
   return (
-    <ul className="space-y-2">
-      {issues.map((it, i) => {
-        const applied = appliedIdx.has(i) || it.applied === true;
-        return (
-          <li key={i} className={`rounded-lg border p-2.5 text-sm transition ${applied ? "border-emerald-200 bg-emerald-50/60" : "border-slate-100 bg-white"}`}>
-            <div className="flex gap-2">
-              <SeverityIcon severity={it.severity} />
-              <div className="flex-1 min-w-0">
-                <div className="text-slate-700">{it.problem}</div>
-                {it.suggestion && (
-                  <div className="text-xs text-slate-500 mt-0.5">💡 {it.suggestion}</div>
-                )}
-                {it.field && (
-                  <button
-                    onClick={() => onGoto?.(it.field)}
-                    className="mt-1 inline-flex items-center gap-1 text-[11px] text-brand-600 bg-brand-50 hover:bg-brand-100 px-1.5 py-0.5 rounded transition group"
-                    title={`定位到编辑器：${it.field}`}
-                  >
-                    <CornerDownRight size={10} className="shrink-0" />
-                    <span>{fieldToLabel(it.field)}</span>
-                    <span className="text-brand-300 group-hover:text-brand-500 font-mono lowercase">跳到编辑</span>
-                  </button>
-                )}
-                {/* AI 改写预览 + 应用按钮 */}
-                {it.rewrite && !applied && (
-                  <div className="mt-2 border-l-2 border-brand-400 bg-brand-50/50 rounded px-2.5 py-2">
-                    <div className="text-[11px] text-brand-600 font-medium mb-1">✨ AI 改写建议</div>
-                    <div className="text-xs text-slate-700 whitespace-pre-wrap leading-relaxed">{it.rewrite}</div>
+    <>
+      <ul className="space-y-2">
+        {issues.map((it, i) => {
+          const applied = appliedIdx.has(i) || it.applied === true;
+          const canRevert = applied && !!it.field && revertibleField === it.field;
+          return (
+            <li key={i} className={`rounded-lg border p-2.5 text-sm transition ${applied ? "border-emerald-200 bg-emerald-50/60" : "border-slate-100 bg-white"}`}>
+              <div className="flex gap-2">
+                <SeverityIcon severity={it.severity} />
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-start gap-2">
+                    <div className="text-slate-700 flex-1 min-w-0">{it.problem}</div>
+                    {onAsk && (
+                      <button
+                        onClick={() => onAsk(it)}
+                        title="带着这条问题去和 AI 对话"
+                        className="shrink-0 inline-flex items-center gap-0.5 text-[11px] text-violet-600 bg-violet-50 hover:bg-violet-100 border border-violet-200 px-1.5 py-0.5 rounded transition"
+                      >
+                        <Wand2 size={10} /> 问问 AI
+                      </button>
+                    )}
+                  </div>
+                  {it.suggestion && (
+                    <div className="text-xs text-slate-500 mt-0.5">💡 {it.suggestion}</div>
+                  )}
+                  {it.field && (
                     <button
-                      onClick={() => { onApply?.(it.field, it.rewrite!); setAppliedIdx((s) => new Set(s).add(i)); onApplied?.(section, i); }}
-                      className="mt-1.5 inline-flex items-center gap-1 text-[11px] bg-brand-600 text-white px-2.5 py-1 rounded hover:bg-brand-700 transition"
+                      onClick={() => onGoto?.(it.field)}
+                      className="mt-1 inline-flex items-center gap-1 text-[11px] text-brand-600 bg-brand-50 hover:bg-brand-100 px-1.5 py-0.5 rounded transition group"
+                      title={`定位到编辑器：${it.field}`}
                     >
-                      <Check size={12} /> 应用到简历
+                      <CornerDownRight size={10} className="shrink-0" />
+                      <span>{fieldToLabel(it.field)}</span>
+                      <span className="text-brand-300 group-hover:text-brand-500 font-mono lowercase">跳到编辑</span>
                     </button>
-                  </div>
-                )}
-                {applied && (
-                  <div className="mt-1.5 text-[11px] text-emerald-600 inline-flex items-center gap-1">
-                    <Check size={12} /> 已应用
-                  </div>
-                )}
+                  )}
+                  {/* AI 改写预览 + 应用按钮 */}
+                  {it.rewrite && !applied && (
+                    <div className="mt-2 border-l-2 border-brand-400 bg-brand-50/50 rounded px-2.5 py-2">
+                      <div className="text-[11px] text-brand-600 font-medium mb-1">✨ AI 改写建议</div>
+                      <div className="text-xs text-slate-700 whitespace-pre-wrap leading-relaxed">{it.rewrite}</div>
+                      <button
+                        onClick={() => goApply(it, i)}
+                        disabled={busyIdx === i}
+                        className="mt-1.5 inline-flex items-center gap-1 text-[11px] bg-brand-600 text-white px-2.5 py-1 rounded hover:bg-brand-700 transition disabled:opacity-50"
+                      >
+                        <Check size={12} /> {busyIdx === i ? "应用中…" : "应用到简历"}
+                      </button>
+                    </div>
+                  )}
+                  {applied && (
+                    <div className="mt-1.5 flex items-center gap-2 text-[11px] text-emerald-600">
+                      <span className="inline-flex items-center gap-1">
+                        <Check size={12} /> 已应用
+                      </span>
+                      {applied && it.field && (
+                        <button
+                          onClick={() => goRevert(it, i)}
+                          disabled={!canRevert || busyIdx === i}
+                          title={canRevert ? "撤销这次修改" : "请先撤销更新的修改"}
+                          className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded border border-emerald-300 hover:bg-emerald-100 transition disabled:opacity-40 disabled:cursor-not-allowed"
+                        >
+                          <RotateCcw size={10} /> 撤销
+                        </button>
+                      )}
+                    </div>
+                  )}
+                </div>
               </div>
-            </div>
-          </li>
-        );
-      })}
-    </ul>
+            </li>
+          );
+        })}
+      </ul>
+      {errMsg && <div className="mt-2 text-[11px] text-red-600">{errMsg}</div>}
+    </>
   );
 }
 
@@ -355,7 +413,18 @@ function RadarChart({ data }: { data: AbilityProfile }) {
   );
 }
 
-export default function AIAnalysisPanel({ open, onClose, content, resumeId, onApply, onGoto }: Props) {
+export default function AIAnalysisPanel({
+  open,
+  onClose,
+  content,
+  resumeId,
+  onApplyIssue,
+  onApplyEdit,
+  onRevert,
+  revisionsRefreshKey,
+  onRefreshRevisions,
+  onGoto,
+}: Props) {
   const [loading, setLoading] = useState(false);
   const [analysis, setAnalysis] = useState<Analysis | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -367,6 +436,32 @@ export default function AIAnalysisPanel({ open, onClose, content, resumeId, onAp
 
   // 模型管理已抽到全局 ModelManager 组件；这里只保留折叠开关与 llm 可用状态（供未配置警示用）
   const [settingsOpen, setSettingsOpen] = useState(false);
+
+  // 分析 / 对话 双层视图（不放进 runAnalyze 的依赖，切 tab 不会重跑分析）
+  const [tab, setTab] = useState<"analysis" | "chat">("analysis");
+  // 对话焦点（从分析面板带过去，聊天侧可增删）
+  const [focus, setFocus] = useState<string[]>([]);
+  // 「问问 AI」预填进输入框的内容
+  const [presetPrompt, setPresetPrompt] = useState<string | null>(null);
+  // 修订账本（用于分析侧「撤销」按钮的可撤销判定）
+  const [revisions, setRevisions] = useState<AiRevisionRecord[]>([]);
+
+  const loadRevisions = useCallback(async () => {
+    if (!resumeId) {
+      setRevisions([]);
+      return;
+    }
+    try {
+      const r = await api.listRevisions(resumeId);
+      setRevisions(r.revisions);
+    } catch {
+      /* 账本拉取失败不阻塞面板 */
+    }
+  }, [resumeId]);
+
+  useEffect(() => {
+    if (open) loadRevisions();
+  }, [open, loadRevisions, revisionsRefreshKey]);
 
   // 打开面板时拉一次 LLM 健康状态，用于展示「未配置 AI 模型」提示
   useEffect(() => {
@@ -412,17 +507,55 @@ export default function AIAnalysisPanel({ open, onClose, content, resumeId, onAp
     }
   };
 
-  // 标记某条建议为「已应用」：本地乐观更新 + 落库到 Resume.analysis（无 resumeId 的未保存简历仅本地标记）
-  const markApplied = useCallback((section: string, index: number) => {
-    setAnalysis((prev) => {
-      if (!prev) return prev;
-      const next = structuredClone(prev);
-      const list = next.sections?.[section as keyof typeof next.sections];
-      if (list?.[index]) list[index].applied = true;
-      return next;
-    });
-    if (resumeId) api.markIssueApplied(resumeId, section, index).catch(() => {});
-  }, [resumeId]);
+  // 标记 / 取消标记某条建议：本地乐观更新 + 落库到 Resume.analysis（无 resumeId 的未保存简历仅本地标记）
+  const markApplied = useCallback(
+    (section: string, index: number, applied = true) => {
+      setAnalysis((prev) => {
+        if (!prev) return prev;
+        const next = structuredClone(prev);
+        const list = next.sections?.[section as keyof typeof next.sections];
+        if (list?.[index]) list[index].applied = applied;
+        return next;
+      });
+      if (resumeId) api.markIssueApplied(resumeId, section, index, applied).catch(() => {});
+    },
+    [resumeId]
+  );
+
+  // ---------------------------------------------------------------------------
+  // 撤销：只允许撤销账本里最新一条未撤销记录（与服务端 revertibleId 口径一致）
+  // ---------------------------------------------------------------------------
+  const revertible = revisions.find((r) => !r.revertedAt) ?? null;
+  const revertibleAnalysisField =
+    revertible?.source === "analysis" && revertible.op === "set" ? revertible.field : null;
+
+  const revertIssue = useCallback(
+    async (issue: Issue): Promise<void> => {
+      if (!issue.field) return;
+      const target = revisions.find(
+        (r) => !r.revertedAt && r.source === "analysis" && r.field === issue.field
+      );
+      if (!target) {
+        setError("未找到对应的修改记录（可能已撤销或被更新的修改覆盖）");
+        return;
+      }
+      const ok = await onRevert(target);
+      if (ok) await loadRevisions();
+    },
+    [revisions, onRevert, loadRevisions]
+  );
+
+  // 「问问 AI」：切到对话 tab，带上该条问题的焦点与预填提问
+  const askAboutIssue = useCallback(
+    (issue: Issue) => {
+      if (issue.field && !focus.includes(issue.field)) setFocus((f) => [...f, issue.field!]);
+      setPresetPrompt(
+        `帮我处理这个问题：${issue.problem}${issue.suggestion ? `\n（建议方向：${issue.suggestion}）` : ""}`
+      );
+      setTab("chat");
+    },
+    [focus]
+  );
 
   if (!open) return null;
 
@@ -438,17 +571,17 @@ export default function AIAnalysisPanel({ open, onClose, content, resumeId, onAp
       {/* 遮罩 */}
       <div className="absolute inset-0 bg-black/30" onClick={onClose} />
       {/* 抽屉 */}
-      <div className="absolute right-0 top-0 h-full w-[520px] max-w-full bg-white shadow-2xl flex flex-col animate-[slideIn_.2s_ease-out]">
+      <div className="absolute right-0 top-0 h-full w-[620px] max-w-full bg-white shadow-2xl flex flex-col animate-[slideIn_.2s_ease-out]">
         {/* 头部 */}
         <div className="shrink-0">
           <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100">
             <div className="flex items-center gap-2">
               <Sparkles size={18} className="text-brand-600" />
-              <span className="font-semibold text-slate-800">AI 简历分析</span>
-              {analysis && !analysis.llmUsed && (
+              <span className="font-semibold text-slate-800">AI 简历助手</span>
+              {tab === "analysis" && analysis && !analysis.llmUsed && (
                 <span className="text-[10px] bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded">仅硬规则</span>
               )}
-              {analysis?.llmUsed && (
+              {tab === "analysis" && analysis?.llmUsed && (
                 <span className="text-[10px] bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded">
                   {analysis.llmProvider}
                 </span>
@@ -462,18 +595,47 @@ export default function AIAnalysisPanel({ open, onClose, content, resumeId, onAp
               >
                 <Settings size={16} />
               </button>
-              <button
-                onClick={() => runAnalyze(false)}
-                disabled={loading}
-                title="重新分析"
-                className="p-1.5 rounded-lg text-slate-500 hover:text-brand-600 hover:bg-slate-100 transition disabled:opacity-40"
-              >
-                <RefreshCw size={16} className={loading ? "animate-spin" : ""} />
-              </button>
+              {tab === "analysis" && (
+                <button
+                  onClick={() => runAnalyze(false)}
+                  disabled={loading}
+                  title="重新分析"
+                  className="p-1.5 rounded-lg text-slate-500 hover:text-brand-600 hover:bg-slate-100 transition disabled:opacity-40"
+                >
+                  <RefreshCw size={16} className={loading ? "animate-spin" : ""} />
+                </button>
+              )}
               <button onClick={onClose} className="p-1.5 rounded-lg text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition">
                 <X size={18} />
               </button>
             </div>
+          </div>
+
+          {/* tab 切换：分析结果 / 简历对话 */}
+          <div className="flex items-center gap-1 px-5 pt-2">
+            <button
+              onClick={() => setTab("analysis")}
+              className={`inline-flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-t-lg border-b-2 transition ${
+                tab === "analysis"
+                  ? "border-brand-600 text-brand-700 font-medium bg-brand-50/50"
+                  : "border-transparent text-slate-500 hover:text-slate-700"
+              }`}
+            >
+              <ScanSearch size={13} /> 分析结果
+              {errorCount > 0 && (
+                <span className="text-[10px] bg-red-100 text-red-700 rounded px-1">{errorCount}</span>
+              )}
+            </button>
+            <button
+              onClick={() => setTab("chat")}
+              className={`inline-flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-t-lg border-b-2 transition ${
+                tab === "chat"
+                  ? "border-brand-600 text-brand-700 font-medium bg-brand-50/50"
+                  : "border-transparent text-slate-500 hover:text-slate-700"
+              }`}
+            >
+              <MessagesSquare size={13} /> 简历对话
+            </button>
           </div>
 
           {/* LLM 设置折叠区（复用全局 ModelManager） */}
@@ -484,8 +646,8 @@ export default function AIAnalysisPanel({ open, onClose, content, resumeId, onAp
           )}
         </div>
 
-        {/* 内容区 */}
-        <div className="flex-1 overflow-y-auto px-5 py-4 space-y-5">
+        {/* 内容区：分析结果（切到对话 tab 时保留挂载，仅隐藏，避免重复触发分析） */}
+        <div className={tab === "analysis" ? "flex-1 overflow-y-auto px-5 py-4 space-y-5" : "hidden"}>
           {loading && (
             <div className="flex flex-col items-center justify-center py-20 text-slate-400">
               <div className="w-10 h-10 border-2 border-brand-500 border-t-transparent rounded-full animate-spin mb-3" />
@@ -642,7 +804,16 @@ export default function AIAnalysisPanel({ open, onClose, content, resumeId, onAp
                     <div className="text-sm font-medium text-slate-700 mb-2">
                       {SECTION_LABELS[section]}
                     </div>
-                    <IssueList issues={issues} section={section} onApply={onApply} onApplied={markApplied} onGoto={onGoto} />
+                    <IssueList
+                      issues={issues}
+                      section={section}
+                      onApplyIssue={onApplyIssue}
+                      onApplied={markApplied}
+                      onGoto={onGoto}
+                      onAsk={askAboutIssue}
+                      revertibleField={revertibleAnalysisField}
+                      onRevertIssue={revertIssue}
+                    />
                   </div>
                 );
               })}
@@ -704,6 +875,26 @@ export default function AIAnalysisPanel({ open, onClose, content, resumeId, onAp
               </div>
             </>
           )}
+
+          {/* 修改历史（分析 + 对话共用一个账本；只允许撤销最新一条未撤销记录） */}
+          <RevisionHistory resumeId={resumeId} refreshKey={revisionsRefreshKey} onRevert={onRevert} />
+        </div>
+
+        {/* 内容区：简历对话（常驻挂载，切 tab 只隐藏，保持流式与会话状态） */}
+        <div className={tab === "chat" ? "flex-1 min-h-0" : "hidden"}>
+          <ChatPanel
+            open={tab === "chat"}
+            content={content}
+            resumeId={resumeId}
+            focus={focus}
+            onFocusChange={setFocus}
+            presetPrompt={presetPrompt}
+            onConsumePresetPrompt={() => setPresetPrompt(null)}
+            onApplyEdit={onApplyEdit}
+            onRevertRevision={onRevert}
+            onRefreshRevisions={onRefreshRevisions}
+            onGoto={onGoto ?? (() => {})}
+          />
         </div>
       </div>
     </div>

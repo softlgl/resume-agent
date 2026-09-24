@@ -1,3 +1,12 @@
+import type {
+  AiRevisionRecord,
+  AuditTask,
+  ChatMessageRecord,
+  ChatSessionMeta,
+  CreateRevisionInput,
+  ResumeEdit,
+} from "@resume-agent/shared";
+
 export interface AIProfile {
   id: string;
   name: string;
@@ -12,7 +21,7 @@ export interface AIProfile {
 
 export interface LlmCallLog {
   id: string;
-  kind: "analyze" | "import";
+  kind: "analyze" | "import" | "chat";
   resumeId: string | null;
   provider: string;
   model: string;
@@ -150,12 +159,76 @@ export const api = {
     }>("/import/parse", fd, onReasoning, onContent, true);
   },
 
-  // 标记分析结果中某条建议为「已应用」（落库到 Resume.analysis）
-  markIssueApplied: (resumeId: string, section: string, index: number) =>
+  // 标记分析结果中某条建议为「已应用」（applied=false 表示撤销标记）
+  markIssueApplied: (resumeId: string, section: string, index: number, applied = true) =>
     request<{ ok: boolean }>(`/ai/analyze/${resumeId}/applied`, {
       method: "PATCH",
-      body: JSON.stringify({ section, index }),
+      body: JSON.stringify({ section, index, applied }),
     }),
+
+  // ---- AI 对话（针对当前简历问答 → 应用修改） ----
+  chatListSessions: (resumeId: string, archived = false) =>
+    request<{ sessions: ChatSessionMeta[] }>(
+      `/ai/chat/sessions?resumeId=${encodeURIComponent(resumeId)}&archived=${archived}`
+    ),
+  chatCreateSession: (p: { resumeId: string; title?: string; focus?: string[]; jd?: string; withOpening?: boolean }) =>
+    request<{ session: ChatSessionMeta; messages: ChatMessageRecord[]; tasks: AuditTask[] }>(
+      "/ai/chat/sessions",
+      { method: "POST", body: JSON.stringify(p) }
+    ),
+  chatGetSession: (id: string) =>
+    request<{ session: ChatSessionMeta; messages: ChatMessageRecord[]; tasks: AuditTask[] }>(
+      `/ai/chat/sessions/${id}`
+    ),
+  chatOlderMessages: (id: string, before: string, limit = 30) =>
+    request<{ messages: ChatMessageRecord[] }>(
+      `/ai/chat/sessions/${id}/messages?before=${encodeURIComponent(before)}&limit=${limit}`
+    ),
+  chatUpdateSession: (id: string, patch: { title?: string; focus?: string[]; jd?: string | null; archived?: boolean }) =>
+    request<{ session: ChatSessionMeta }>(`/ai/chat/sessions/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify(patch),
+    }),
+  chatDeleteSession: (id: string) =>
+    request<{ ok: boolean }>(`/ai/chat/sessions/${id}`, { method: "DELETE" }),
+  chatSendStream: (
+    sessionId: string,
+    content: string,
+    onReasoning: (delta: string) => void,
+    onContent: (delta: string) => void,
+    signal?: AbortSignal
+  ) =>
+    consumeSSEFetch<{ message: ChatMessageRecord; edits: ResumeEdit[]; rejected: string[] }>(
+      `/ai/chat/sessions/${sessionId}/messages`,
+      JSON.stringify({ content }),
+      onReasoning,
+      onContent,
+      false,
+      signal
+    ),
+  chatMarkEditApplied: (messageId: string, index: number, applied: boolean) =>
+    request<{ ok: boolean; message: ChatMessageRecord }>(
+      `/ai/chat/messages/${messageId}/edits/${index}/applied`,
+      { method: "POST", body: JSON.stringify({ applied }) }
+    ),
+  chatValidateEdits: (resumeId: string, edits: ResumeEdit[], userText = "") =>
+    request<{ edits: ResumeEdit[]; rejected: string[]; missing: string[][] }>("/ai/chat/validate-edits", {
+      method: "POST",
+      body: JSON.stringify({ resumeId, edits, userText }),
+    }),
+
+  // ---- 修改账本（分析 / 对话共用的撤销依据） ----
+  listRevisions: (resumeId: string, limit = 50) =>
+    request<{ revisions: AiRevisionRecord[]; revertibleId: string | null }>(
+      `/ai/revisions?resumeId=${encodeURIComponent(resumeId)}&limit=${limit}`
+    ),
+  createRevision: (payload: CreateRevisionInput) =>
+    request<{ revision: AiRevisionRecord }>("/ai/revisions", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+  markRevisionReverted: (id: string) =>
+    request<{ revision: AiRevisionRecord }>(`/ai/revisions/${id}`, { method: "PATCH" }),
 };
 
 // 解析 SSE(fetch stream)：按 \n\n 切块，读 event/data，reasoning/content → 回调，result 事件 resolve
@@ -164,14 +237,15 @@ async function consumeSSEFetch<T>(
   body: BodyInit,
   onReasoning: (delta: string) => void,
   onContent?: (delta: string) => void,
-  isFormData = false
+  isFormData = false,
+  signal?: AbortSignal
 ): Promise<T> {
   const headers: Record<string, string> = {};
   const token = getToken();
   if (token) headers["Authorization"] = `Bearer ${token}`;
   if (!isFormData) headers["Content-Type"] = "application/json";
 
-  const res = await fetch(path, { method: "POST", headers, body });
+  const res = await fetch(path, { method: "POST", headers, body, signal });
   if (!res.ok || !res.body) {
     const data = await res.json().catch(() => ({}));
     throw new Error(data.error || `请求失败 (${res.status})`);

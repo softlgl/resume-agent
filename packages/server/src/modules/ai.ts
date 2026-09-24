@@ -13,6 +13,7 @@ import {
   defaultsFor,
 } from "../services/llm.js";
 import type { LLMProfile, LLMConfig, LLMProvider } from "../services/llm.js";
+import { isNoRewriteField } from "../services/resume-edit.js";
 import type { PrismaClient } from "@prisma/client";
 
 // ---------------------------------------------------------------------------
@@ -279,7 +280,8 @@ const FORCE_KEYS: Record<string, string> = {
 // 仅在 basic（基本信息）节下生效的人名类键
 const BASIC_NAME_KEYS: Record<string, string> = { name: "[姓名]", realName: "[姓名]" };
 
-function sanitizeContent(value: unknown, inBasic = false): any {
+// 发送给 LLM 前脱敏（对话侧 ai-chat.ts 复用同一份逻辑，保证两处隐私处理一致）
+export function sanitizeContent(value: unknown, inBasic = false): any {
   if (value == null) return value;
   if (Array.isArray(value)) {
     return value.map((v) => sanitizeContent(v, inBasic));
@@ -416,16 +418,14 @@ async function llmAnalyze(content: ResumeContent, jd?: string, onReasoning?: (de
     };
   }
 
-  // 硬过滤：AI 不可能编造真实值的字段（时间、链接、联系方式、薪资等），
+  // 硬过滤：AI 不可能编造真实值的字段（时间、链接、联系方式、薪资、姓名等），
   // 即使 LLM 输出了 rewrite 也强行清空，防止瞎编误导前端"应用"按钮
-  const NO_REWRITE_PATTERNS = [
-    /\.(start|end|link|url|github|gitee|phone|mobile|tel|email|mail|qq|wechat|wx|address|location|salary|expect|expectedSalary|birthday|birth|age|gender|avatar|photo|image|portfolio|blog|website|homepage|doubao|zhihu|bilibili|juejin|csdn|leetcode|hotjob|jobPosition|jobLevel)$/i,
-  ];
+  // 判定逻辑与对话侧共用（services/resume-edit.ts 的 isNoRewriteField）
   const stripFakeRewrites = (sections: { basic: Issue[]; works: Issue[]; projects: Issue[]; skills: Issue[] }) => {
     for (const key of Object.keys(sections) as (keyof typeof sections)[]) {
       sections[key] = sections[key].map((it) => {
         if (!it.rewrite) return it;
-        if (NO_REWRITE_PATTERNS.some((re) => re.test(it.field))) {
+        if (isNoRewriteField(it.field)) {
           return { ...it, rewrite: undefined };
         }
         // 整段容器字段（field 不含下标 [ 或字段路径 .，如 "works"/"projects"/"skills"/"basic"）：
@@ -655,11 +655,11 @@ function buildConfigPayload(profiles: LLMProfile[], activeId: string | null, cfg
 }
 
 /** 记录一次 AI 调用日志（保留全部历史，前端只展示最新一条） */
-async function recordCall(
+export async function recordCall(
   prisma: PrismaClient,
   userId: string,
-  result: ResumeAnalysis,
-  opts: { kind?: "analyze" | "import"; resumeId?: string | null } = {}
+  result: { reasoning?: string | null; output?: string | null },
+  opts: { kind?: "analyze" | "import" | "chat"; resumeId?: string | null } = {}
 ) {
   try {
     const cfg = getDefaultConfig();
@@ -813,7 +813,7 @@ export async function aiModule(app: FastifyInstance) {
   app.patch("/ai/analyze/:resumeId/applied", async (request, reply) => {
     if (!request.userId) return reply.code(401).send({ error: "未登录" });
     const { resumeId } = request.params as { resumeId: string };
-    const body = request.body as { section?: string; index?: number } | null;
+    const body = request.body as { section?: string; index?: number; applied?: boolean } | null;
     const section = body?.section;
     const index = body?.index;
     if (!section || index === undefined) return reply.code(400).send({ error: "section 与 index 必填" });
@@ -831,7 +831,8 @@ export async function aiModule(app: FastifyInstance) {
       return reply.code(400).send({ error: "无效的 section / index" });
     }
 
-    sections[section][index].applied = true;
+    // applied 显式传 false 时取消标记（撤销 AI 修改后回滚「已应用」徽标）
+    sections[section][index].applied = body?.applied !== false;
     await app.prisma.resume.update({ where: { id: resumeId }, data: { analysis: analysis as unknown as object } });
     return { ok: true };
   });

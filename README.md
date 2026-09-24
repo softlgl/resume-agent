@@ -23,6 +23,7 @@
 - **中文排版**：DOCX 统一使用宋体（SimSun）；PDF 降级路径读取 Windows 系统字体 `STSONG.TTF`，中文不乱码。
 - **AI 简历分析**：接入 OpenAI 兼容的 LLM（云端 DeepSeek/通义千问，或本地 Ollama·LM Studio·vLLM）。输出 ATS 友好度与内容质量评分、逐条问题清单（可定位跳转到对应区块并高亮）、能力雷达图与结构化总结；写作数据自动脱敏，分析结果落库、重开可回看，问题改写支持「应用到简历」，可选结合岗位 JD 做匹配分析。
 - **多模型配置**：设置面板内可维护多套模型配置（Profile：供应商 / API Key / Base URL / 模型 / 上下文与输出上限），随时新增、修改、删除并切换激活；配置落库持久化，清空后自动回退到 `.env`。
+- **AI 问答改简历**：在 AI 面板的「对话」tab 里针对当前简历提问，AI 给出可应用的修改建议——**单字段改写**（词级差异对比后一键替换）与**新增整条经历**（工作 / 教育 / 项目 / 技能）。新增经历会先给出半成品草稿卡片，缺的必填项 AI 会追问、你补齐后应用。AI 只给建议，是否写入由你点「应用」决定；应用后可随时**撤销**（只能撤销最新一条，避免依赖错乱）。多会话可切换、重命名、归档、分页回看历史，支持显式「焦点区块」与结合 JD 提问。
 - **导入 Word/PDF**：支持导入 `.docx` / `.pdf` 简历，自动提取文本并经 LLM 识别为可编辑的结构化字段，预览逐字段确认后另存为新简历；文字型 PDF 直接抽文本，扫描版（图片型 PDF）自动走本地 RapidOCR 识别。
 
 ## 技术栈
@@ -51,8 +52,9 @@ resume-agent/
 │  │  ├─ src/
 │  │  │  ├─ index.ts          # 应用入口（CORS / 插件 / 路由注册）
 │  │  │  ├─ plugins/          # prisma.ts（数据库）、auth.ts（JWT 校验钩子）
-│  │  │  ├─ modules/          # auth.ts、resume.ts、export.ts、ai.ts、import.ts 路由
-│  │  │  ├─ services/         # llm.ts、extract.ts、structurize.ts、ocripy.ts、redact.ts
+│  │  │  ├─ modules/          # auth.ts、resume.ts、export.ts、ai.ts、import.ts、ai-chat.ts 路由
+│  │  │  ├─ services/         # llm.ts、extract.ts、structurize.ts、ocripy.ts、redact.ts、
+│  │  │  │                    # resume-edit.ts（AI 修改的服务端权威校验层）
 │  │  │  ├─ types/            # 第三方库缺失类型声明（mammoth、pdfjs）
 │  │  │  └─ export/           # docx.ts、pdf.ts 渲染实现
 │  │  ├─ scripts/             # ocr.py（RapidOCR 子进程脚本）
@@ -61,7 +63,10 @@ resume-agent/
 │     └─ src/
 │        ├─ pages/            # Login.tsx、Editor.tsx
 │        ├─ components/       # Preview、SectionForm、TemplatePicker、ResumeSwitcher、
-│        │                    # NewResumeDialog、ImportResumeDialog、AIAnalysisPanel、ModelManager
+│        │                    # NewResumeDialog、ImportResumeDialog、AIAnalysisPanel、ModelManager、
+│        │                    # ChatPanel（AI 对话）、ChatSessionPicker、EditCard（修改建议卡片）、
+│        │                    # RevisionHistory（修改账本与撤销）
+│        ├─ utils/            # diff.ts（词级差异）、markdownLite.tsx、fieldLabel.ts
 │        ├─ api/client.ts     # 统一请求封装（自动携带 Bearer Token）
 │        └─ store/resume.ts   # Zustand 状态
 ├─ start.bat / stop.bat       # Windows 一键启动 / 停止
@@ -180,7 +185,7 @@ npm run start --workspace=@resume-agent/server  # 运行编译后的后端
 | GET | `/resumes/:id` | 简历详情 |
 | POST | `/resumes` | 新建简历，body：`{ title, templateId, content }` |
 | PUT | `/resumes/:id` | 更新简历，body 同上 |
-| DELETE | `/resumes/:id` | 删除简历 |
+| DELETE | `/resumes/:id` | 删除简历；同时事务级联清理该简历的 AI 对话会话与消息、修改账本、LLM 调用日志 |
 | POST / GET | `/export/:id/:format` | 导出文件，`format` 为 `docx` 或 `pdf`；POST 可带 `{ pageBreakIds }` 复用预览分页断点（GET 为无断点的兼容写法） |
 | GET | `/ai/health` | LLM 是否可用 / 当前生效配置摘要 |
 | GET | `/ai/config` | 模型配置列表（全部 Profile + 当前激活项）与生效配置摘要 |
@@ -188,8 +193,27 @@ npm run start --workspace=@resume-agent/server  # 运行编译后的后端
 | DELETE | `/ai/config` | 清空所有模型 Profile（回退到 `.env` 配置） |
 | GET | `/ai/calls/latest` | 最近一次 LLM 调用日志（kind / provider / model / ok / reasoning / output） |
 | POST | `/ai/analyze` | 简历分析；`streaming:true` 时返回 SSE（逐字思考过程 + 输出内容），带 `jd` 做岗位匹配，带 `resumeId` 结果落库 |
-| PATCH | `/ai/analyze/:resumeId/applied` | 把分析结果中某条建议标记为「已应用」（body：`{ section, index }`，写回 `Resume.analysis`） |
+| PATCH | `/ai/analyze/:resumeId/applied` | 把分析结果中某条建议标记为「已应用」（body：`{ section, index, applied }`，写回 `Resume.analysis`） |
 | POST | `/import/parse` | 上传 `.docx`/`.pdf` 解析为结构化内容（multipart，≤20MB），SSE 返回识别过程 |
+
+### AI 问答（对话式改简历）
+
+| 方法 | 路径 | 说明 |
+| --- | --- | --- |
+| GET | `/ai/chat/sessions` | 会话列表，query：`resumeId`（必填）、`archived`，按最后消息时间倒序 |
+| POST | `/ai/chat/sessions` | 新建会话，body：`{ resumeId, title?, focus?, jd?, withOpening? }`；`withOpening` 会插入一条用分析结果拼的本地开场消息，并返回体检待办 `tasks` |
+| GET | `/ai/chat/sessions/:id` | 会话详情：最近 30 条消息 + 体检待办 |
+| GET | `/ai/chat/sessions/:id/messages` | 历史消息分页，query：`before`（游标为消息 id）、`limit`（默认 30，上限 100） |
+| PATCH | `/ai/chat/sessions/:id` | 更新会话：标题 / 焦点区块 / JD / 归档 |
+| DELETE | `/ai/chat/sessions/:id` | 删除会话及其消息 |
+| POST | `/ai/chat/sessions/:id/messages` | 发消息，**SSE** 流式返回 `reasoning` / `content` / `result` / `done` / `error`；`result` 携带校验后的 `edits` 与被拒原因 `rejected` |
+| POST | `/ai/chat/messages/:id/edits/:index/applied` | 标记某条消息中的第 N 条建议已应用（body：`{ applied }`） |
+| POST | `/ai/chat/validate-edits` | 校验一批 AI 修改建议，body：`{ resumeId, edits, userText }`，返回 `{ edits, rejected, missing }`（`missing` 为各条 append 仍缺的必填项） |
+| GET | `/ai/revisions` | 修改账本列表，query：`resumeId`、`limit`、`before`；返回 `revertibleId`（仅最新一条未撤销的记录可撤销） |
+| POST | `/ai/revisions` | 记一笔修订（前端保存成功后调用），body：`{ resumeId, source, op, section, field, label, beforeValue, afterValue, itemId?, sessionId?, messageId? }` |
+| PATCH | `/ai/revisions/:id` | 标记撤销（body：`{ reverted }`）；简历内容的回写由前端完成，服务端只当账本 |
+
+> AI 修改建议在服务端由 `services/resume-edit.ts` 统一归一化与校验：拦截路径注入、下标越界、容器覆写、姓名改写、AI 编造事实字段（时间 / 链接 / 联系方式等）；月份类字段统一收敛为 `YYYY-MM`，`至今` 改用 `works[].current` 布尔表示。
 
 ## 模板一览
 

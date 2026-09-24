@@ -45,13 +45,69 @@ model LlmCallLog {
 }
 
 model Resume {
-  id        String   @id @default(cuid())
-  userId    String
-  title     String   @default("我的简历")
-  templateId String  @default("classic")
-  content   Json
-  analysis  Json?   // AI 分析结果缓存（基础分析不含 JD 匹配）
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  id         String   @id @default(cuid())
+  userId     String
+  title      String   @default("我的简历")
+  templateId String   @default("classic")
+  content    Json
+  analysis   Json? // AI 分析结果缓存（基础分析不含 JD 匹配）
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+// AI 对话会话（同一简历可开多个会话）
+model AiChatSession {
+  id            String   @id @default(cuid())
+  resumeId      String
+  userId        String
+  title         String   @default("新对话")
+  focus         String?  @db.Text // JSON string：焦点字段路径数组
+  jd            String?  @db.Text // 本会话的 JD 定向文本
+  archived      Boolean  @default(false)
+  lastMessageAt DateTime @default(now())
+  createdAt     DateTime @default(now())
+
+  messages AiChatMessage[]
+
+  @@index([resumeId, lastMessageAt])
+  @@index([userId, lastMessageAt])
+}
+
+// 对话消息（edits 为服务端已校验的规范化修改建议）
+model AiChatMessage {
+  id             String   @id @default(cuid())
+  sessionId      String
+  role           String // user | assistant
+  content        String   @db.Text
+  edits          Json? // ResumeEdit[]，仅 assistant 消息有
+  appliedIndexes Json? // number[]：已应用的 edit 下标
+  reasoning      String?  @db.Text
+  createdAt      DateTime @default(now())
+
+  session AiChatSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@index([sessionId, createdAt])
+}
+
+// 统一修订账本（append-only；撤销只写 revertedAt）
+// 同时服务对话侧与分析侧，是简历内容回滚的唯一依据
+model AiRevision {
+  id          String    @id @default(cuid())
+  resumeId    String
+  userId      String
+  source      String // chat | analysis
+  op          String // set | append
+  section     String
+  field       String
+  label       String
+  beforeValue String?   @db.Text
+  afterValue  String?   @db.Text
+  itemId      String? // append：写入条目的 id
+  sessionId   String?
+  messageId   String?
+  revertedAt  DateTime?
+  createdAt   DateTime  @default(now())
+
+  @@index([resumeId, createdAt])
 }
