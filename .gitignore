@@ -77,6 +77,31 @@ out_*.bin
 # 本地字体资源（约 39MB，代码未直接引用，且含微软版权字体，不入库）
 packages/server/assets/fonts/
 
+# ---------- .NET (packages/server-dotnet) ----------
+# 构建产物
+packages/server-dotnet/**/bin/
+packages/server-dotnet/**/obj/
+*.binlog
+artifacts/
+
+# Visual Studio / Rider
+.vs/
+*.user
+*.suo
+*.rsuser
+packages/server-dotnet/*.sln.iml
+
+# 测试结果
+TestResults/
+*.trx
+
+# NuGet
+*.nupkg
+packages/server-dotnet/**/packages/
+
+# 本地调试工具与测试数据（导出对比、行距测量等，不入库）
+packages/server-dotnet/debug/
+
 # IDE / 本地工具数据
 .codebuddy/
 .trae/

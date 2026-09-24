@@ -10,6 +10,7 @@
   ],
   "scripts": {
     "dev:server": "npm run dev --workspace=@resume-agent/server",
+    "dev:server:dotnet": "powershell -NoProfile -ExecutionPolicy Bypass -File packages/server-dotnet/dev.ps1",
     "dev:client": "npm run dev --workspace=@resume-agent/client",
     "build": "npm run build --workspaces --if-present",
     "db:generate": "npm run db:generate --workspace=@resume-agent/server",
