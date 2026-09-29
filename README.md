@@ -4,11 +4,10 @@
 前后端共用一套排版令牌与模板配置，保证「网页预览 / PDF / DOCX」三端视觉一致。
 
 ![Node](https://img.shields.io/badge/Node-%E2%89%A520-339933?logo=node.js&logoColor=white)
+![Dotnet](https://img.shields.io/badge/.NET-10-512BD4?logo=dotnet&logoColor=white)
 ![TypeScript](https://img.shields.io/badge/TypeScript-5.4-3178C6?logo=typescript&logoColor=white)
-![Fastify](https://img.shields.io/badge/Fastify-4-000000?logo=fastify&logoColor=white)
 ![React](https://img.shields.io/badge/React-18-61DAFB?logo=react&logoColor=black)
 ![Vite](https://img.shields.io/badge/Vite-5-646CFF?logo=vite&logoColor=white)
-![Prisma](https://img.shields.io/badge/Prisma-5-2D3748?logo=prisma&logoColor=white)
 ![TailwindCSS](https://img.shields.io/badge/Tailwind-3.4-38B2AC?logo=tailwindcss&logoColor=white)
 
 ## 功能特性
@@ -31,7 +30,7 @@
 | 层 | 选型 |
 | --- | --- |
 | 前端 | React 18 · React Router 6 · Zustand · React Hook Form · Tailwind CSS · Vite 5 |
-| 后端 | Fastify 4 · Prisma 5 · Zod · bcryptjs · jsonwebtoken |
+| 后端 | Node.js：Fastify 4 · Prisma 5 · Zod · bcryptjs · jsonwebtoken  <br> .NET：ASP.NET Core 10 · EF Core (Pomelo MySQL) · Microsoft.Extensions.AI |
 | 导出 | `docx`（DOCX 渲染）· PDFKit（PDF 降级渲染）· Word COM（DOCX → PDF） |
 | AI | OpenAI 兼容协议 · 流式输出（SSE）· 结构化 JSON Schema |
 | 导入/OCR | mammoth（docx 文本）· pdfjs-dist + @napi-rs/canvas（pdf 文本/渲染）· RapidOCR（扫描件 OCR，conda 环境） |
@@ -59,6 +58,7 @@ resume-agent/
 │  │  │  └─ export/           # docx.ts、pdf.ts 渲染实现
 │  │  ├─ scripts/             # ocr.py（RapidOCR 子进程脚本）
 │  │  └─ prisma/              # schema.prisma、seed.ts
+│  ├─ server-dotnet/          # ASP.NET Core 后端（端口、契约与 Node 版一致，前端零改动）
 │  └─ client/                 # React 前端
 │     └─ src/
 │        ├─ pages/            # Login.tsx、Editor.tsx
@@ -80,6 +80,7 @@ resume-agent/
 - Node.js **≥ 20**（后端启动脚本使用 `--env-file`）
 - npm **≥ 9**（需要 workspaces 支持）
 - MySQL **≥ 8**
+- （可选）.NET **10 SDK**（若运行 .NET 版后端；Windows 可直接 `start-dotnet.bat`）
 - Windows 导出 PDF 的最佳效果依赖本机安装 **Microsoft Word**（缺失时自动降级）
 - （可选）AI 简历分析需要一个 **OpenAI 兼容** 的 LLM 端点（默认 DeepSeek，也可用本地 Ollama / LM Studio / vLLM）；未配置时自动降级为本地硬规则检查
 - （可选）导入**扫描版** PDF 需要本机安装 **conda + RapidOCR（onnxruntime）**，首次使用会自动创建 `resume_ocr` 虚拟环境并安装依赖
@@ -146,7 +147,7 @@ npm run dev:server
 npm run dev:client
 ```
 
-Windows 用户可直接双击 **`start.bat`** 一键启动（自动装依赖、清理端口占用、打开浏览器），用 **`stop.bat`** 停止。
+Windows 用户可直接双击 **`start.bat`** 一键启动 Node.js 版（自动装依赖、清理端口占用、打开浏览器），或改用 **`start-dotnet.bat`** 启动 .NET 版（端口、API 契约与 Node 版完全一致，前端零改动；后端实现见 [packages/server-dotnet/README.md](packages/server-dotnet/README.md)）。用 **`stop.bat`** 停止。
 
 打开 <http://localhost:5173> 注册账号即可开始使用。
 

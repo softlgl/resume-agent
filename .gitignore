@@ -97,10 +97,12 @@ TestResults/
 
 # NuGet
 *.nupkg
+*.snupkg
 packages/server-dotnet/**/packages/
 
-# 本地调试工具与测试数据（导出对比、行距测量等，不入库）
-packages/server-dotnet/debug/
+# 发布 / 测试临时产物
+packages/server-dotnet/**/publish/
+packages/server-dotnet/**/TestArtifacts/
 
 # IDE / 本地工具数据
 .codebuddy/

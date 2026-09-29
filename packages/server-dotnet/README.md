@@ -41,23 +41,6 @@ cd packages/server-dotnet/ResumeAgent.Api && dotnet run
 4. DOCX 行内标题（职位 · 公司 + 右侧日期）用 **1 行 2 列嵌套表格**实现（TS 版是 RIGHT tab 制表位）：左侧标题过长时正常折行，日期固定宽度右对齐——tab 方案在标题宽度达到制表位时会把日期推出文字区造成遮挡。
 5. LLM 分析结果的归一化对模型输出的键名多变体做了兼容（分组名 `section/name/sectionName`、大小写、`field` 与 `section` 并存时优先真实字段路径），field 统一小写以匹配前端 camelCase 定位。
 
-## 调试工具（`debug/`，不入库）
-
-| 工具 | 用途 |
-|---|---|
-| `render-pdf-pages.cjs` | 把 PDF 每页渲染成 PNG，视觉检查排版 |
-| `compare-pdf.cjs` | 对比两份 PDF 的字体（/BaseFont）与字号分布 |
-| `measure-pitch.cjs` | 测量 PDF 相邻正文行距（行距校准用） |
-| `docx2pdf.ps1` | 调用本机 Word COM 把 DOCX 转 PDF（验证 DOCX 排版） |
-| `smoke-*.json` | 冒烟/边界测试用的简历数据（长内容、双栏超长文本等） |
-
-依赖仓库根目录的 `node_modules`（pdfjs-dist、@napi-rs/canvas，复用 Node 版依赖）。示例：
-
-```bash
-node debug/render-pdf-pages.cjs 导出.pdf page   # 生成 page-1.png、page-2.png...
-powershell -File debug/docx2pdf.ps1 -InPath a.docx -OutPath a.pdf
-```
-
 ## 已知注意点
 
 - Pomelo 当前主线为 net8/net9，net10 上运行正常；若后续 EF Core 10 稳定可升级 Pomelo。
