@@ -141,7 +141,7 @@ public static class Prompts
             foreach (var (k, v) in obj)
             {
                 var low = k.ToLowerInvariant();
-                var childIsBasic = inBasic || low == "basic";
+                var childIsBasic = inBasic || low == ResumeSection.Basic;
                 if (v is JsonValue jv && jv.TryGetValue<string>(out var s) &&
                     (ForceKeys.TryGetValue(low, out var force) || (childIsBasic && BasicNameKeys.TryGetValue(low, out force))))
                 {

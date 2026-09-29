@@ -46,7 +46,7 @@ public static class ExportEndpoints
                 {
                     request.EnableBuffering();
                     var doc = await System.Text.Json.JsonSerializer.DeserializeAsync<ExportRequest>(
-                        request.Body, SseWriter.JsonOpts, ct);
+                        request.Body, SseWriter.JsonOptions, ct);
                     if (doc?.PageBreakIds is { Length: > 0 }) pageBreakIds = doc.PageBreakIds;
                 }
                 catch

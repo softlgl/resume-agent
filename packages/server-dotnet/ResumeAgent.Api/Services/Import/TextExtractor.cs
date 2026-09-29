@@ -11,12 +11,6 @@ using UglyToad.PdfPig;
 
 namespace ResumeAgent.Api.Services.Import;
 
-public class ExtractResult
-{
-    public string Text { get; init; } = "";
-    public string SourceType { get; init; } = "text"; // "text" | "ocr"
-}
-
 public class TextExtractor(ILogger<TextExtractor> logger, OcrRunner ocrRunner)
 {
     // 文字型 PDF 若整篇识别文字少于该长度，视为扫描件，进入 OCR

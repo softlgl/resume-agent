@@ -1,14 +1,13 @@
 // AI 分析结果模型（对齐 modules/ai.ts 的类型定义，前后端共用 JSON 形状）
 
 using System.Text.Json.Serialization;
+using ResumeAgent.Api.Contracts;
 
 namespace ResumeAgent.Api.Services.Analysis;
 
-public enum IssueSeverity { Error, Warning, Tip }
-
 public class Issue
 {
-    [JsonPropertyName("severity")] public string Severity { get; set; } = "warning"; // error | warning | tip
+    [JsonPropertyName("severity")] public string Severity { get; set; } = IssueSeverity.Warning; // error | warning | tip
     [JsonPropertyName("field")] public string Field { get; set; } = "";   // 如 "works[0].summary"，前端据此定位
     [JsonPropertyName("problem")] public string Problem { get; set; } = "";
     [JsonPropertyName("suggestion")] public string? Suggestion { get; set; }

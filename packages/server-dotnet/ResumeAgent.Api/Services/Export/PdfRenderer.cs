@@ -76,21 +76,21 @@ public static class PdfRenderer
                     page.Content().Row(row =>
                     {
                         // 侧栏：深色底铺满页高
-                        row.ConstantItem((float)Print.SidebarWidth).MinHeight((float)Print.PageHeight)
+                        row.ConstantItem((float)PrintTokens.SidebarWidth).MinHeight((float)PrintTokens.PageHeight)
                             .Background(c.Sidebar ?? "#1E293B")
-                            .PaddingHorizontal((float)Print.SidebarPad)
+                            .PaddingHorizontal((float)PrintTokens.SidebarPad)
                             .PaddingVertical(40)
                             .Column(side =>
                             {
-                                side.Item().PaddingBottom(Print.SideNameAfter)
+                                side.Item().PaddingBottom(PrintTokens.SideNameAfter)
                                     .Text(b.Name.Length > 0 ? b.Name : "姓名")
-                                    .Styled("#FFFFFF", Print.SidebarName, bold: true);
+                                    .Styled("#FFFFFF", PrintTokens.SidebarName, bold: true);
                                 if (b.Title.Length > 0)
-                                    side.Item().PaddingBottom(Print.SideTitleAfter)
-                                        .Text(b.Title).Styled("#93C5FD", Print.SidebarTitle);
+                                    side.Item().PaddingBottom(PrintTokens.SideTitleAfter)
+                                        .Text(b.Title).Styled("#93C5FD", PrintTokens.SidebarTitle);
                                 side.Spacing(2);
-                                side.Item().PaddingTop(Print.SideLabelBefore).PaddingBottom(Print.SideLabelAfter)
-                                    .Text("联系方式").Styled("#FFFFFF", Print.SidebarLabel, bold: true);
+                                side.Item().PaddingTop(PrintTokens.SideLabelBefore).PaddingBottom(PrintTokens.SideLabelAfter)
+                                    .Text("联系方式").Styled("#FFFFFF", PrintTokens.SidebarLabel, bold: true);
                                 if (b.Phone.Length > 0) SideField(side, $"电话：{b.Phone}");
                                 if (b.Email.Length > 0) SideField(side, $"邮箱：{b.Email}");
                                 if (b.Location.Length > 0) SideField(side, $"地址：{b.Location}");
@@ -100,14 +100,14 @@ public static class PdfRenderer
 
                         // 主区
                         row.RelativeItem()
-                            .PaddingHorizontal((float)Print.Margin)
-                            .PaddingVertical((float)Print.Margin)
+                            .PaddingHorizontal((float)PrintTokens.Margin)
+                            .PaddingVertical((float)PrintTokens.Margin)
                             .Column(main => RenderMain(main, tpl, content, extra));
                     });
                 }
                 else
                 {
-                    page.Content().PaddingVertical((float)Print.Margin).PaddingHorizontal((float)Print.Margin)
+                    page.Content().PaddingVertical((float)PrintTokens.Margin).PaddingHorizontal((float)PrintTokens.Margin)
                         .Column(main => RenderMain(main, tpl, content, extra, headerBand: true));
                 }
             });
@@ -117,7 +117,7 @@ public static class PdfRenderer
     }
 
     private static void SideField(ColumnDescriptor col, string line) =>
-        col.Item().PaddingBottom(Print.SideFieldAfter).Text(line).Styled("#E2E8F0", Print.SidebarField);
+        col.Item().PaddingBottom(PrintTokens.SideFieldAfter).Text(line).Styled("#E2E8F0", PrintTokens.SidebarField);
 
     // 主区渲染（双栏/单栏共用；单栏额外渲染姓名头部软底带）
     private static void RenderMain(
@@ -144,65 +144,65 @@ public static class PdfRenderer
             var contact = string.Join("  |  ", new[] { b.Phone, b.Email, b.Location, b.Website }.Where(s => s.Length > 0));
             var band = new List<Action<ColumnDescriptor>>
             {
-                ccol => ccol.Item().PaddingBottom(Print.NameAfter).Text(b.Name.Length > 0 ? b.Name : "姓名").Styled(c.Primary, Print.Name, bold: true),
+                ccol => ccol.Item().PaddingBottom(PrintTokens.NameAfter).Text(b.Name.Length > 0 ? b.Name : "姓名").Styled(c.Primary, PrintTokens.Name, bold: true),
             };
             if (b.Title.Length > 0)
-                band.Add(ccol => ccol.Item().PaddingBottom(Print.TitleAfter).Text(b.Title).Styled(c.Muted, Print.Title));
+                band.Add(ccol => ccol.Item().PaddingBottom(PrintTokens.TitleAfter).Text(b.Title).Styled(c.Muted, PrintTokens.Title));
             if (contact.Length > 0)
-                band.Add(ccol => ccol.Item().PaddingBottom(Print.ContactAfter).Text(contact).Styled(c.Muted, Print.Small));
+                band.Add(ccol => ccol.Item().PaddingBottom(PrintTokens.ContactAfter).Text(contact).Styled(c.Muted, PrintTokens.Small));
             if (extra.Count > 0)
-                band.Add(ccol => ccol.Item().PaddingBottom(Print.ExtraAfter).Text(string.Join("  |  ", extra)).Styled(c.Muted, Print.Small));
+                band.Add(ccol => ccol.Item().PaddingBottom(PrintTokens.ExtraAfter).Text(string.Join("  |  ", extra)).Styled(c.Muted, PrintTokens.Small));
 
-            col.Item().Background(soft).PaddingHorizontal(Print.SectionBefore).PaddingVertical(Print.NameAfter)
+            col.Item().Background(soft).PaddingHorizontal(PrintTokens.SectionBefore).PaddingVertical(PrintTokens.NameAfter)
                 .Column(bcol =>
                 {
                     foreach (var add in band) add(bcol);
                     if (band.Count == 1 && b.Title.Length == 0 && contact.Length == 0 && extra.Count == 0) hasHeader = false;
                 });
             _ = hasHeader;
-            col.Item().PaddingBottom(Print.BlockAfter);
+            col.Item().PaddingBottom(PrintTokens.BlockAfter);
         }
 
         void SectionTitle(string txt)
         {
             // 对齐 DOCX 间距语义：章节标题前 = sectionBefore(10) + 非首章节叠加 blockAfter(8)。
             // 不要把标题行高算进前置间距（行盒自身占位），否则每章节前凭空多出 ~20pt 留白。
-            var before = Print.SectionBefore + (firstSection ? 0 : Print.BlockAfter);
+            var before = PrintTokens.SectionBefore + (firstSection ? 0 : PrintTokens.BlockAfter);
             firstSection = false;
             col.Item().PaddingTop(before)
                 .BorderBottom(0.5f).BorderColor(c.Line)
                 .Row(row =>
                 {
-                    row.ConstantItem(4).Height((float)Print.SectionTitle).Background(c.Primary);
-                    row.RelativeItem().PaddingLeft((float)(Print.BulletAfter + Print.LineGap))
-                        .Text(txt).Styled(c.Primary, Print.SectionTitle, bold: true);
+                    row.ConstantItem(4).Height((float)PrintTokens.SectionTitle).Background(c.Primary);
+                    row.RelativeItem().PaddingLeft((float)(PrintTokens.BulletAfter + PrintTokens.LineGap))
+                        .Text(txt).Styled(c.Primary, PrintTokens.SectionTitle, bold: true);
                 });
-            col.Item().PaddingBottom(Print.SectionAfter);
+            col.Item().PaddingBottom(PrintTokens.SectionAfter);
         }
 
-        void Body(string str, double size = Print.Body, string? color = null)
+        void Body(string str, double size = PrintTokens.Body, string? color = null)
         {
-            col.Item().PaddingBottom(Print.BodyAfter)
-                .Text(str).Styled(color ?? c.Text, size).LineHeight(Print.PdfLineRatio);
+            col.Item().PaddingBottom(PrintTokens.BodyAfter)
+                .Text(str).Styled(color ?? c.Text, size).LineHeight(PrintTokens.PdfLineRatio);
         }
 
         void Bullet(string str)
         {
-            col.Item().PaddingBottom(Print.BulletAfter).PaddingLeft((float)(Print.BulletAfter + Print.LineGap))
-                .Text($"- {str}").Styled(c.Text, Print.Bullet).LineHeight(Print.PdfLineRatio);
+            col.Item().PaddingBottom(PrintTokens.BulletAfter).PaddingLeft((float)(PrintTokens.BulletAfter + PrintTokens.LineGap))
+                .Text($"- {str}").Styled(c.Text, PrintTokens.Bullet).LineHeight(PrintTokens.PdfLineRatio);
         }
 
         void InlineTitle(string leftStr, string rightStr, bool firstInBlock)
         {
-            var leftSize = Print.Body * Print.InlineTitleScale;
+            var leftSize = PrintTokens.Body * PrintTokens.InlineTitleScale;
             // 对齐 DOCX：非首条目前置 blockAfter(8)（与上一条目最后段落的 bulletAfter 叠加为 10pt）
-            col.Item().PaddingTop(firstInBlock ? 0 : Print.BlockAfter).Row(row =>
+            col.Item().PaddingTop(firstInBlock ? 0 : PrintTokens.BlockAfter).Row(row =>
             {
                 // 左标题占满剩余宽度；右侧日期用 AutoItem（自然宽度）贴右缘——
                 // 若日期也用 RelativeItem 会把标题压到半宽导致换行、行间出现大空隙
-                row.RelativeItem().Text(leftStr).Styled(c.Text, leftSize, bold: true).LineHeight(Print.PdfLineRatio);
+                row.RelativeItem().Text(leftStr).Styled(c.Text, leftSize, bold: true).LineHeight(PrintTokens.PdfLineRatio);
                 row.AutoItem().AlignRight()
-                    .Text(rightStr).Styled(c.Muted, Print.Small);
+                    .Text(rightStr).Styled(c.Muted, PrintTokens.Small);
             });
             col.Item().PaddingBottom(2);
         }
@@ -212,8 +212,8 @@ public static class PdfRenderer
             var softBg = Templates.Soften(c.Primary, 0.08);
             col.Item().Row(row =>
             {
-                row.AutoItem().PaddingTop((float)(Print.Bullet * 0.1))
-                    .Text($"{g.Category} ：").Styled(c.Text, Print.Body, bold: true);
+                row.AutoItem().PaddingTop((float)(PrintTokens.Bullet * 0.1))
+                    .Text($"{g.Category} ：").Styled(c.Text, PrintTokens.Body, bold: true);
                 row.RelativeItem().PaddingLeft(6)
                     .Inlined(inl =>
                     {
@@ -221,11 +221,11 @@ public static class PdfRenderer
                         foreach (var s in Templates.SplitSkills(g.Items))
                         {
                             inl.Item().Background(softBg).PaddingHorizontal(2).PaddingVertical(1)
-                                .Text(s).Styled(c.Primary, Print.Bullet);
+                                .Text(s).Styled(c.Primary, PrintTokens.Bullet);
                         }
                     });
             });
-            col.Item().PaddingBottom(Print.BodyAfter);
+            col.Item().PaddingBottom(PrintTokens.BodyAfter);
         }
 
         void RenderSection(string key)
@@ -281,8 +281,8 @@ public static class PdfRenderer
                         MaybeBreak($"projects#{i}");
                         InlineTitle($"{p.Name}{(p.Company.Length > 0 ? $" · {p.Company}" : "")} · {p.Role}", $"{p.Start} - {p.End}", i == 0);
                         if (p.Link.Length > 0)
-                            col.Item().PaddingBottom(Print.BulletAfter)
-                                .Text(p.Link).Styled(c.Accent, Print.Small);
+                            col.Item().PaddingBottom(PrintTokens.BulletAfter)
+                                .Text(p.Link).Styled(c.Accent, PrintTokens.Small);
                         foreach (var l in Templates.SplitBulletLines(p.Description))
                             if (Templates.SplitBulletLines(p.Description).Count > 1) Bullet(l); else Body(l);
                     }

@@ -2,6 +2,8 @@
 
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using System.Text.RegularExpressions;
+using ResumeAgent.Api.Common;
 using ResumeAgent.Api.Contracts;
 using ResumeAgent.Api.Services.Llm;
 
@@ -9,7 +11,16 @@ namespace ResumeAgent.Api.Services.Analysis;
 
 public class Analyzer(ChatService chat, ProfileSnapshotService profiles, ILogger<Analyzer> logger)
 {
-    public record AnalyzeCallbacks(Action<string>? OnReasoning = null, Action<string>? OnContent = null);
+    public record AnalyzeCallbacks(Func<string, Task>? OnReasoning = null, Func<string, Task>? OnContent = null);
+
+    /// <summary>AI 不可能编造真实值的字段（时间、链接、联系方式、薪资等），命中则清空 rewrite</summary>
+    private static readonly Regex NoRewriteRegex = new(
+        @"\.(start|end|link|url|github|gitee|phone|mobile|tel|email|mail|qq|wechat|wx|address|location|salary|expect|expectedSalary|birthday|birth|age|gender|avatar|photo|image|portfolio|blog|website|homepage|doubao|zhihu|bilibili|juejin|csdn|leetcode|hotjob|jobPosition|jobLevel)$",
+        RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
+    /// <summary>明显是建议式文字（如"建议添加..."），不该被当成可替换的正文</summary>
+    private static readonly Regex SuggestionRegex = new(
+        "^建议|^可以|^推荐|^应该|^最好|需补充|需添加|请填写|请补充", RegexOptions.Compiled);
 
     // ---------------------------------------------------------------------
     // LLM 分析
@@ -27,8 +38,8 @@ public class Analyzer(ChatService chat, ProfileSnapshotService profiles, ILogger
 
         var messages = new List<ChatMessageItem>
         {
-            new("system", Prompts.BuildSystemPrompt()),
-            new("user", Prompts.BuildUserPrompt(sanitized, jd)),
+            new(ChatMessageRole.System, Prompts.BuildSystemPrompt()),
+            new(ChatMessageRole.User, Prompts.BuildUserPrompt(sanitized, jd)),
         };
         var opts = new ChatOptionsEx
         {
@@ -38,7 +49,7 @@ public class Analyzer(ChatService chat, ProfileSnapshotService profiles, ILogger
             MaxTokens = 262144,
         };
         var text = await chat.ChatStreamAsync(messages, opts,
-            d => { reasoningTxt += d; cb?.OnReasoning?.Invoke(d); },
+            async d => { reasoningTxt += d; if (cb is not null && cb.OnReasoning is not null) await cb.OnReasoning(d); },
             cb?.OnContent, runtimeOverride, ct);
         if (string.IsNullOrEmpty(text)) return null;
 
@@ -47,51 +58,44 @@ public class Analyzer(ChatService chat, ProfileSnapshotService profiles, ILogger
 
         // 归一化：本地模型可能返回不同的字段名（technicalAbility vs tech）
         var norm = parsed["abilityProfile"] as JsonObject ?? [];
-        var ap = new AbilityProfile
+        var abilityProfile = new AbilityProfile
         {
-            Tech = FirstInt(norm, 50, "tech", "technicalAbility", "technical_ability"),
-            Project = FirstInt(norm, 50, "project", "projectComplexity", "project_complexity"),
-            Stability = FirstInt(norm, 50, "stability", "workStability", "work_stability"),
-            Communication = FirstInt(norm, 50, "communication", "communicationAbility", "communication_ability"),
-            Education = FirstInt(norm, 50, "education", "educationBackground", "education_background"),
+            Tech = GetFirstInt(norm, 50, "tech", "technicalAbility", "technical_ability"),
+            Project = GetFirstInt(norm, 50, "project", "projectComplexity", "project_complexity"),
+            Stability = GetFirstInt(norm, 50, "stability", "workStability", "work_stability"),
+            Communication = GetFirstInt(norm, 50, "communication", "communicationAbility", "communication_ability"),
+            Education = GetFirstInt(norm, 50, "education", "educationBackground", "education_background"),
         };
 
         var sections = NormalizeSections(parsed);
 
         // 硬过滤：AI 不可能编造真实值的字段（时间、链接、联系方式、薪资等），
         // 即使 LLM 输出了 rewrite 也强行清空，防止瞎编误导前端"应用"按钮
-        var noRewrite = new System.Text.RegularExpressions.Regex(
-            @"\.(start|end|link|url|github|gitee|phone|mobile|tel|email|mail|qq|wechat|wx|address|location|salary|expect|expectedSalary|birthday|birth|age|gender|avatar|photo|image|portfolio|blog|website|homepage|doubao|zhihu|bilibili|juejin|csdn|leetcode|hotjob|jobPosition|jobLevel)$",
-            System.Text.RegularExpressions.RegexOptions.IgnoreCase);
-        var suggestionPatterns = new[] { "^建议", "^可以", "^推荐", "^应该", "^最好", "需补充", "需添加", "请填写", "请补充" };
         foreach (var list in new[] { sections.Basic, sections.Works, sections.Projects, sections.Skills })
         {
             foreach (var it in list)
             {
-                if (it.Rewrite is null) continue;
-                if (noRewrite.IsMatch(it.Field)) { it.Rewrite = null; continue; }
+                var rewrite = it.Rewrite;
+                if (rewrite is null) continue;
+                if (NoRewriteRegex.IsMatch(it.Field)) { it.Rewrite = null; continue; }
                 // 整段容器字段（field 不含下标 [ 或 .）：rewrite 会把容器覆写成字符串导致前端崩溃
                 if (!it.Field.Contains('[') && !it.Field.Contains('.')) { it.Rewrite = null; continue; }
                 // 明显是建议式文字（如"建议添加..."）也清空
-                if (suggestionPatterns.Any(p =>
-                        System.Text.RegularExpressions.Regex.IsMatch(it.Rewrite!.Trim(), p)))
-                {
-                    it.Rewrite = null;
-                }
+                if (SuggestionRegex.IsMatch(rewrite.Trim())) it.Rewrite = null;
             }
         }
 
         // 结构化总结：对模型可能使用的不同字段名做兜底
         AnalysisSummary? summary = null;
-        var sRaw = (parsed["summary"] ?? parsed["overview"] ?? parsed["conclusion"]) as JsonObject;
-        if (sRaw is not null)
+        var summaryObject = (parsed["summary"] ?? parsed["overview"] ?? parsed["conclusion"]) as JsonObject;
+        if (summaryObject is not null)
         {
             summary = new AnalysisSummary
             {
-                Overall = FirstStr(sRaw, "overall", "overview", "summary") ?? "",
-                Strengths = StrList(sRaw["strengths"]),
-                Weaknesses = StrList(sRaw["weaknesses"]),
-                Priority = FirstStr(sRaw, "priority", "action", "recommendation") ?? "",
+                Overall = GetFirstString(summaryObject, "overall", "overview", "summary") ?? "",
+                Strengths = GetStringList(summaryObject["strengths"]),
+                Weaknesses = GetStringList(summaryObject["weaknesses"]),
+                Priority = GetFirstString(summaryObject, "priority", "action", "recommendation") ?? "",
             };
         }
 
@@ -101,7 +105,7 @@ public class Analyzer(ChatService chat, ProfileSnapshotService profiles, ILogger
             QualityScore = parsed["qualityScore"] is JsonValue qv && qv.TryGetValue<int>(out var q) ? q : null,
             Sections = sections,
             Summary = summary,
-            AbilityProfile = ap,
+            AbilityProfile = abilityProfile,
             Reasoning = reasoningTxt,
             Output = text,
         };
@@ -126,7 +130,7 @@ public class Analyzer(ChatService chat, ProfileSnapshotService profiles, ILogger
                 foreach (var group in flat.OfType<JsonObject>())
                 {
                     // 分组名候选键：section / name / sectionName / section_name（模型输出键名多变）
-                    var section = (FirstStr(group, "section", "name", "sectionName", "section_name") ?? "").ToLowerInvariant();
+                    var section = (GetFirstString(group, "section", "name", "sectionName", "section_name") ?? "").ToLowerInvariant();
                     var bucket =
                         section == "works" || section == "工作经历" ? sections.Works :
                         section == "projects" || section == "项目经历" ? sections.Projects :
@@ -141,7 +145,7 @@ public class Analyzer(ChatService chat, ProfileSnapshotService profiles, ILogger
                 // 格式1: 扁平数组
                 foreach (var item in flat.OfType<JsonObject>())
                 {
-                    var field = (FirstStr(item, "path", "section", "field", "key") ?? "").ToLowerInvariant();
+                    var field = (GetFirstString(item, "path", "section", "field", "key") ?? "").ToLowerInvariant();
                     var issue = MakeIssue(item);
                     if (field.StartsWith("basic") || field.StartsWith("基本")) sections.Basic.Add(issue);
                     else if (field.StartsWith("works") || field.StartsWith("工作")) sections.Works.Add(issue);
@@ -154,14 +158,14 @@ public class Analyzer(ChatService chat, ProfileSnapshotService profiles, ILogger
         else if (raw is JsonObject grouped)
         {
             // 格式2: 分组对象
-            sections.Basic = Arr(grouped, "basic", "基本信息", "basicInfo").OfType<JsonObject>().Select(i => MakeIssue(i, "basic")).ToList();
-            sections.Works = Arr(grouped, "works", "工作经历", "workExp").OfType<JsonObject>().Select(i => MakeIssue(i, "works")).ToList();
-            sections.Projects = Arr(grouped, "projects", "项目经历").OfType<JsonObject>().Select(i => MakeIssue(i, "projects")).ToList();
-            sections.Skills = Arr(grouped, "skills", "技能").OfType<JsonObject>().Select(i => MakeIssue(i, "skills")).ToList();
+            sections.Basic = GetArrayOrEmpty(grouped, "basic", "基本信息", "basicInfo").OfType<JsonObject>().Select(i => MakeIssue(i, "basic")).ToList();
+            sections.Works = GetArrayOrEmpty(grouped, "works", "工作经历", "workExp").OfType<JsonObject>().Select(i => MakeIssue(i, "works")).ToList();
+            sections.Projects = GetArrayOrEmpty(grouped, "projects", "项目经历").OfType<JsonObject>().Select(i => MakeIssue(i, "projects")).ToList();
+            sections.Skills = GetArrayOrEmpty(grouped, "skills", "技能").OfType<JsonObject>().Select(i => MakeIssue(i, "skills")).ToList();
         }
         return sections;
 
-        static JsonArray Arr(JsonObject o, params string[] keys)
+        static JsonArray GetArrayOrEmpty(JsonObject o, params string[] keys)
         {
             foreach (var k in keys)
                 if (o[k] is JsonArray a) return a;
@@ -176,17 +180,17 @@ public class Analyzer(ChatService chat, ProfileSnapshotService profiles, ILogger
         // 大小写不一致会导致"应用改写"定位失败
         // 注意键优先级：field/path 是真实字段路径；section 是分区名（格式 1 变体里两者并存），
         // 若 section 优先会把 "Works" 当字段路径，进而触发整段过滤把 rewrite 清掉
-        var field = (FirstStr(item, "path", "field", "key", "section") ?? defaultField).ToLowerInvariant();
-        var problem = FirstStr(item, "problem", "issue", "description", "message") ?? "";
-        var suggestion = FirstStr(item, "suggestion", "fix");
+        var field = (GetFirstString(item, "path", "field", "key", "section") ?? defaultField).ToLowerInvariant();
+        var problem = GetFirstString(item, "problem", "issue", "description", "message") ?? "";
+        var suggestion = GetFirstString(item, "suggestion", "fix");
         // 关键：提取 AI 修正后的完整内容（兼容不同模型可能用的字段名）
-        var rewrite = FirstStr(item, "rewrite", "rewritten", "fixed", "edited", "newContent", "revised");
-        var level = FirstStr(item, "severity", "level") ?? "warning";
+        var rewrite = GetFirstString(item, "rewrite", "rewritten", "fixed", "edited", "newContent", "revised");
+        var level = GetFirstString(item, "severity", "level") ?? IssueSeverity.Warning;
         var severity = level switch
         {
-            "error" or "严重" => "error",
-            "tip" or "建议" or "info" => "tip",
-            _ => "warning",
+            IssueSeverity.Error or "严重" => IssueSeverity.Error,
+            IssueSeverity.Tip or "建议" or "info" => IssueSeverity.Tip,
+            _ => IssueSeverity.Warning,
         };
         return new Issue { Severity = severity, Field = field, Problem = problem, Suggestion = suggestion, Rewrite = rewrite };
     }
@@ -248,13 +252,13 @@ public class Analyzer(ChatService chat, ProfileSnapshotService profiles, ILogger
         var sanitized = Prompts.SanitizeContent(node);
         var result = await chat.ChatAsync(
         [
-            new("system", "你是招聘专家。请对比候选人简历和目标岗位 JD，判断匹配度。先从 JD 提取 5-10 个硬性要求（技能/经验/学历），逐条判断简历是否满足，然后列出明确的差距项。"),
-            new("user", $"简历：\n```json\n{sanitized.ToJsonString()}\n```\n\nJD：\n{jd}"),
+            new(ChatMessageRole.System, "你是招聘专家。请对比候选人简历和目标岗位 JD，判断匹配度。先从 JD 提取 5-10 个硬性要求（技能/经验/学历），逐条判断简历是否满足，然后列出明确的差距项。"),
+            new(ChatMessageRole.User, $"简历：\n```json\n{sanitized.ToJsonString()}\n```\n\nJD：\n{jd}"),
         ], new ChatOptionsEx { JsonSchema = Prompts.MatchSchema, Temperature = 0.2 }, runtimeOverride, ct);
         if (string.IsNullOrEmpty(result?.Text)) return null;
         try
         {
-            return JsonSerializer.Deserialize<MatchResult>(result.Text, AppJson.Options);
+            return JsonSerializer.Deserialize<MatchResult>(result.Text, JsonDefaults.Options);
         }
         catch (JsonException ex)
         {
@@ -267,21 +271,21 @@ public class Analyzer(ChatService chat, ProfileSnapshotService profiles, ILogger
     // JsonNode 小工具
     // ---------------------------------------------------------------------
 
-    private static int FirstInt(JsonObject o, int dflt, params string[] keys)
+    private static int GetFirstInt(JsonObject o, int dflt, params string[] keys)
     {
         foreach (var k in keys)
             if (o[k] is JsonValue v && v.TryGetValue<int>(out var i)) return i;
         return dflt;
     }
 
-    private static string? FirstStr(JsonObject o, params string[] keys)
+    private static string? GetFirstString(JsonObject o, params string[] keys)
     {
         foreach (var k in keys)
             if (o[k] is JsonValue v && v.TryGetValue<string>(out var s) && s.Length > 0) return s;
         return null;
     }
 
-    private static List<string> StrList(JsonNode? node)
+    private static List<string> GetStringList(JsonNode? node)
     {
         if (node is not JsonArray arr) return [];
         var list = new List<string>();
@@ -289,14 +293,4 @@ public class Analyzer(ChatService chat, ProfileSnapshotService profiles, ILogger
             if (item is JsonValue v && v.TryGetValue<string>(out var s)) list.Add(s);
         return list;
     }
-}
-
-/// <summary>Analysis 域专用 JSON 反序列化选项（camelCase，与前端契约一致）</summary>
-public static class AppJson
-{
-    public static readonly JsonSerializerOptions Options = new()
-    {
-        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
-        PropertyNameCaseInsensitive = true,
-    };
 }

@@ -4,25 +4,19 @@
 
 using System.Diagnostics;
 using System.Text.Json;
+using Microsoft.Extensions.Options;
+using ResumeAgent.Api.Common;
 
 namespace ResumeAgent.Api.Services.Import;
 
-public class OcrResult
-{
-    public bool Ok { get; init; }
-    public string Text { get; init; } = "";
-    public string? Error { get; init; }
-}
-
-public class OcrRunner(ILogger<OcrRunner> logger)
+public class OcrRunner(IOptions<OcrOptions> options, ILogger<OcrRunner> logger)
 {
     private static readonly string ScriptPath = FindScriptPath();
-    private static readonly string EnvName = Environment.GetEnvironmentVariable("RESUME_OCR_ENV") ?? "resume_ocr";
-    private static readonly object Lock = new();
-    private static string _ready = "untried"; // untried | ready | failed
-    private static string _lastError = "";
-
-    private static string CondaBin => Environment.GetEnvironmentVariable("CONDA_EXE") ?? "conda";
+    private readonly string _envName = options.Value.EnvName;
+    private readonly string _condaBin = options.Value.CondaExe;
+    private readonly object _lock = new();
+    private string _ready = "untried"; // untried | ready | failed
+    private string _lastError = "";
 
     private static string FindScriptPath()
     {
@@ -37,11 +31,11 @@ public class OcrRunner(ILogger<OcrRunner> logger)
         return Path.Combine("packages", "server", "scripts", "ocr.py");
     }
 
-    private static string CondaRun(string[] args, int timeoutMs)
+    private string CondaRun(string[] args, int timeoutMs)
     {
         var psi = new ProcessStartInfo
         {
-            FileName = CondaBin,
+            FileName = _condaBin,
             Arguments = string.Join(' ', args.Select(Quote)),
             UseShellExecute = false,
             RedirectStandardOutput = true,
@@ -62,7 +56,7 @@ public class OcrRunner(ILogger<OcrRunner> logger)
 
     private static string Truncate(string s, int max) => s.Length <= max ? s : s[..max];
 
-    private static bool EnvExists()
+    private bool EnvExists()
     {
         try
         {
@@ -71,30 +65,30 @@ public class OcrRunner(ILogger<OcrRunner> logger)
         catch { return false; }
         try
         {
-            CondaRun(["run", "-n", EnvName, "python", "--version"], 60000);
+            CondaRun(["run", "-n", _envName, "python", "--version"], 60000);
             return true;
         }
         catch { return false; }
     }
 
-    private static bool IsInstalled()
+    private bool IsInstalled()
     {
         try
         {
-            CondaRun(["run", "-n", EnvName, "python", "-c", "import rapidocr, onnxruntime"], 60000);
+            CondaRun(["run", "-n", _envName, "python", "-c", "import rapidocr, onnxruntime"], 60000);
             return true;
         }
         catch { return false; }
     }
 
-    private static bool EnsureReady()
+    private bool EnsureReady()
     {
         try
         {
             if (!EnvExists())
-                CondaRun(["create", "-n", EnvName, "python", "-y", "-q"], 600000);
+                CondaRun(["create", "-n", _envName, "python", "-y", "-q"], 600000);
             if (!IsInstalled())
-                CondaRun(["run", "-n", EnvName, "python", "-m", "pip", "install", "-q", "rapidocr", "onnxruntime"], 600000);
+                CondaRun(["run", "-n", _envName, "python", "-m", "pip", "install", "-q", "rapidocr", "onnxruntime"], 600000);
             _ready = "ready";
             return true;
         }
@@ -110,14 +104,14 @@ public class OcrRunner(ILogger<OcrRunner> logger)
     public OcrResult RunOcr(IReadOnlyList<string> imagePaths)
     {
         if (imagePaths.Count == 0) return new OcrResult { Ok = false };
-        lock (Lock)
+        lock (_lock)
         {
             if (_ready != "ready" && (_ready == "failed" || !EnsureReady()))
                 return new OcrResult { Ok = false, Error = _lastError };
 
             try
             {
-                var args = new List<string> { "run", "-n", EnvName, "python", ScriptPath };
+                var args = new List<string> { "run", "-n", _envName, "python", ScriptPath };
                 args.AddRange(imagePaths);
                 var stdout = CondaRun([.. args], 180000);
                 // conda run 可能输出激活横幅，取出第一个 { 到最后一个 } 的 JSON

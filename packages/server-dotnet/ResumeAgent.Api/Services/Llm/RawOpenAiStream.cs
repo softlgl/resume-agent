@@ -21,22 +21,20 @@ public static class RawOpenAiStream
     /// <summary>流式调用 OpenAI 兼容 /chat/completions，返回最终 content 全文；失败返回 null</summary>
     public static async Task<string?> StreamAsync(
         LlmConfig cfg, IReadOnlyList<ChatMessageItem> items, ChatOptionsEx opts,
-        bool useJsonObjectFormat, Action<string>? onReasoning, Action<string>? onContent,
+        bool useJsonObjectFormat, Func<string, Task>? onReasoning, Func<string, Task>? onContent,
         ILogger logger, CancellationToken ct)
     {
-        var isLocal = LlmDefaults.IsLocal(cfg.Provider);
-        var defaultMax = isLocal ? 4000 : 2000;
-        var body = new Dictionary<string, object?>
+        var body = new OpenAiChatRequest
         {
-            ["model"] = cfg.Model,
-            ["messages"] = items.Select(m => new { role = m.Role, content = m.Content }),
-            ["temperature"] = opts.Temperature ?? 0.3,
+            Model = cfg.Model,
+            Messages = items.Select(m => new OpenAiMessage(m.Role, m.Content)).ToList(),
+            Temperature = opts.Temperature ?? 0.3,
             // 以 profile.maxOutput 作为真实上限收敛（对齐 TS）
-            ["max_tokens"] = Math.Min(opts.MaxTokens ?? 6000, cfg.MaxOutput),
-            ["stream"] = true,
+            MaxTokens = Math.Min(opts.MaxTokens ?? 6000, cfg.MaxOutput),
+            Stream = true,
+            // 第三方兼容端点只支持 json_object（json_schema 会 400，对齐 TS）
+            ResponseFormat = useJsonObjectFormat ? new OpenAiResponseFormat("json_object") : null,
         };
-        // 第三方兼容端点只支持 json_object（json_schema 会 400，对齐 TS）
-        if (useJsonObjectFormat) body["response_format"] = new { type = "json_object" };
 
         using var req = new HttpRequestMessage(HttpMethod.Post, cfg.BaseUrl.TrimEnd('/') + "/chat/completions");
         req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", cfg.ApiKey);
@@ -68,36 +66,27 @@ public static class RawOpenAiStream
             var data = line[5..].Trim();
             if (data == "[DONE]") break;
 
-            JsonElement chunk;
+            OpenAiStreamChunk? chunk;
             try
             {
-                chunk = JsonSerializer.Deserialize<JsonElement>(data);
+                chunk = JsonSerializer.Deserialize<OpenAiStreamChunk>(data);
             }
             catch (JsonException)
             {
                 continue;
             }
-            if (!chunk.TryGetProperty("choices", out var choices) || choices.GetArrayLength() == 0) continue;
-            if (choices[0].ValueKind != JsonValueKind.Object ||
-                !choices[0].TryGetProperty("delta", out var delta)) continue;
+            if (chunk?.Choices is not { Count: > 0 }) continue;
+            var delta = chunk.Choices[0].Delta;
+            if (delta is null) continue;
 
             // 思考过程：reasoning_content（dashscope/deepseek）或 reasoning（兜底）
-            string? reasoning = null;
-            if (delta.TryGetProperty("reasoning_content", out var rc) && rc.ValueKind == JsonValueKind.String)
-                reasoning = rc.GetString();
-            if (string.IsNullOrEmpty(reasoning) &&
-                delta.TryGetProperty("reasoning", out var r2) && r2.ValueKind == JsonValueKind.String)
-                reasoning = r2.GetString();
-            if (!string.IsNullOrEmpty(reasoning)) onReasoning?.Invoke(reasoning);
+            var reasoning = !string.IsNullOrEmpty(delta.ReasoningContent) ? delta.ReasoningContent : delta.Reasoning;
+            if (!string.IsNullOrEmpty(reasoning) && onReasoning is not null) await onReasoning(reasoning);
 
-            if (delta.TryGetProperty("content", out var c) && c.ValueKind == JsonValueKind.String)
+            if (!string.IsNullOrEmpty(delta.Content))
             {
-                var s = c.GetString();
-                if (!string.IsNullOrEmpty(s))
-                {
-                    accum.Append(s);
-                    onContent?.Invoke(s);
-                }
+                accum.Append(delta.Content);
+                if (onContent is not null) await onContent(delta.Content);
             }
         }
         return accum.ToString().Trim();

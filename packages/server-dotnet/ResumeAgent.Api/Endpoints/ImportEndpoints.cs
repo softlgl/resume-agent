@@ -4,6 +4,7 @@
 using System.Security.Claims;
 using ResumeAgent.Api.Auth;
 using ResumeAgent.Api.Common;
+using ResumeAgent.Api.Contracts;
 using ResumeAgent.Api.Data;
 using ResumeAgent.Api.Services.Import;
 using ResumeAgent.Api.Services.Llm;
@@ -61,8 +62,8 @@ public static class ImportEndpoints
             try
             {
                 content = await structurizer.StructurizeTextAsync(sendText,
-                    d => { importReasoning += d; sse.SendAsync("reasoning", new { delta = d }, requestAborted).GetAwaiter().GetResult(); },
-                    d => { importOutput += d; sse.SendAsync("content", new { delta = d }, requestAborted).GetAwaiter().GetResult(); },
+                    async d => { importReasoning += d; await sse.SendAsync("reasoning", new { delta = d }, requestAborted); },
+                    async d => { importOutput += d; await sse.SendAsync("content", new { delta = d }, requestAborted); },
                     requestAborted);
             }
             catch
@@ -101,14 +102,14 @@ public static class ImportEndpoints
                 {
                     Id = Cuid.New(),
                     UserId = userId,
-                    Kind = "import",
+                    Kind = LlmCallKind.Import,
                     ResumeId = null,
                     Provider = LlmDefaults.ProviderName(cfg.Provider),
                     Model = cfg.Model,
                     Ok = content is not null,
                     Reasoning = importReasoning.Length > 0 ? importReasoning : null,
                     Output = content is not null
-                        ? System.Text.Json.JsonSerializer.Serialize(content, SseWriter.JsonOpts)
+                        ? System.Text.Json.JsonSerializer.Serialize(content, SseWriter.JsonOptions)
                         : importOutput.Length > 0 ? importOutput : null,
                     CreatedAt = DateTime.Now,
                 });

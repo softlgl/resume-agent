@@ -15,10 +15,6 @@ namespace ResumeAgent.Api.Endpoints;
 
 public static class AiEndpoints
 {
-    public sealed record AnalyzeRequest(
-        string? ResumeId = null, ResumeContent? Content = null, string? Jd = null,
-        bool? Force = null, bool? Streaming = null, LlmConfig? Config = null);
-
     private static IResult Error(string msg, int code) => Results.Json(new { error = msg }, statusCode: code);
 
     private static string? UserIdOf(ClaimsPrincipal p) => p.UserId();
@@ -123,33 +119,32 @@ public static class AiEndpoints
         });
 
         // 增删改选模型 profile：body { action: 'add'|'update'|'remove'|'setActive'|'clear', ... }
-        group.MapPost("/config", async (JsonObject body, ClaimsPrincipal principal, AppDbContext db, ProfileSnapshotService snapshot) =>
+        group.MapPost("/config", async (AiConfigRequest body, ClaimsPrincipal principal, AppDbContext db, ProfileSnapshotService snapshot) =>
         {
             if (UserIdOf(principal) is null) return Error("未登录", 401);
-            var action = body?["action"]?.GetValue<string>() ?? "add";
-            string? Id() => body?["id"]?.GetValue<string>();
+            var action = body.Action ?? "add";
 
             switch (action)
             {
                 case "add":
                 {
-                    var providerName = body?["provider"]?.GetValue<string>();
+                    var providerName = body.Provider;
                     var provider = LlmDefaults.Parse(providerName);
                     if (provider is null) return Error("provider 必填", 400);
                     var def = ProfileSnapshotService.DefaultsFor(provider.Value);
                     var count = await db.AiModelProfiles.CountAsync();
-                    var model = body?["model"]?.GetValue<string>()?.Trim();
+                    var model = body.Model?.Trim();
                     db.AiModelProfiles.Add(new Data.AiModelProfile
                     {
                         Id = Cuid.New(),
-                        Name = body?["name"]?.GetValue<string>()?.Trim()
+                        Name = body.Name?.Trim()
                             ?? (model is { Length: > 0 } ? $"{providerName} · {model}" : providerName!),
                         Provider = LlmDefaults.ProviderName(provider.Value),
-                        ApiKey = body?["apiKey"]?.GetValue<string>() ?? "",
-                        BaseUrl = body?["baseUrl"]?.GetValue<string>()?.Trim() ?? def.BaseUrl,
+                        ApiKey = body.ApiKey ?? "",
+                        BaseUrl = body.BaseUrl?.Trim() ?? def.BaseUrl,
                         Model = model is { Length: > 0 } ? model : def.Model,
-                        MaxContext = body?["maxContext"]?.GetValue<int>() ?? def.MaxContext,
-                        MaxOutput = body?["maxOutput"]?.GetValue<int>() ?? def.MaxOutput,
+                        MaxContext = body.MaxContext ?? def.MaxContext,
+                        MaxOutput = body.MaxOutput ?? def.MaxOutput,
                         Active = count == 0, // 第一条自动激活
                         CreatedAt = DateTime.Now,
                     });
@@ -157,27 +152,25 @@ public static class AiEndpoints
                 }
                 case "update":
                 {
-                    var id = Id();
-                    if (id is null) return Error("id 必填", 400);
-                    var t = await db.AiModelProfiles.FirstOrDefaultAsync(x => x.Id == id);
+                    if (body.Id is null) return Error("id 必填", 400);
+                    var t = await db.AiModelProfiles.FirstOrDefaultAsync(x => x.Id == body.Id);
                     if (t is null) return Error("模型不存在", 404);
-                    var provider = LlmDefaults.Parse(body?["provider"]?.GetValue<string>()) ?? LlmDefaults.Parse(t.Provider) ?? LlmProvider.Openai;
-                    var def = ProfileSnapshotService.DefaultsFor(provider);
-                    var model = body?["model"]?.GetValue<string>()?.Trim();
-                    t.Name = body?["name"]?.GetValue<string>()?.Trim() ?? t.Name;
+                    var provider = LlmDefaults.Parse(body.Provider) ?? LlmDefaults.Parse(t.Provider) ?? LlmProvider.Openai;
+                    var model = body.Model?.Trim();
+                    t.Name = body.Name?.Trim() ?? t.Name;
                     t.Provider = LlmDefaults.ProviderName(provider);
-                    if (body?["apiKey"] is not null) t.ApiKey = body["apiKey"]!.GetValue<string>();
-                    if (body?["baseUrl"] is not null) t.BaseUrl = body["baseUrl"]!.GetValue<string>()?.Trim() ?? def.BaseUrl;
+                    // 这几个字段「传了才覆盖」，没传保持原值
+                    if (body.ApiKey is not null) t.ApiKey = body.ApiKey;
+                    if (body.BaseUrl is not null) t.BaseUrl = body.BaseUrl.Trim();
                     t.Model = model is { Length: > 0 } ? model : t.Model;
-                    if (body?["maxContext"] is not null) t.MaxContext = body["maxContext"]!.GetValue<int>();
-                    if (body?["maxOutput"] is not null) t.MaxOutput = body["maxOutput"]!.GetValue<int>();
+                    if (body.MaxContext is not null) t.MaxContext = body.MaxContext.Value;
+                    if (body.MaxOutput is not null) t.MaxOutput = body.MaxOutput.Value;
                     break;
                 }
                 case "remove":
                 {
-                    var id = Id();
-                    if (id is null) return Error("id 必填", 400);
-                    var t = await db.AiModelProfiles.FirstOrDefaultAsync(x => x.Id == id);
+                    if (body.Id is null) return Error("id 必填", 400);
+                    var t = await db.AiModelProfiles.FirstOrDefaultAsync(x => x.Id == body.Id);
                     if (t is null) return Error("模型不存在", 404);
                     db.AiModelProfiles.Remove(t);
                     await db.SaveChangesAsync();
@@ -191,9 +184,8 @@ public static class AiEndpoints
                 }
                 case "setActive":
                 {
-                    var id = Id();
-                    if (id is null) return Error("id 必填", 400);
-                    var t = await db.AiModelProfiles.FirstOrDefaultAsync(x => x.Id == id);
+                    if (body.Id is null) return Error("id 必填", 400);
+                    var t = await db.AiModelProfiles.FirstOrDefaultAsync(x => x.Id == body.Id);
                     if (t is null) return Error("模型不存在", 404);
                     await db.AiModelProfiles.Where(x => x.Active).ExecuteUpdateAsync(s => s.SetProperty(x => x.Active, false));
                     t.Active = true;
@@ -221,12 +213,12 @@ public static class AiEndpoints
 
         // 标记分析结果中的某条建议为「已应用」，落库到 Resume.analysis（供重开回看）
         group.MapPatch("/analyze/{resumeId}/applied", async (
-            string resumeId, JsonObject body, ClaimsPrincipal principal, AppDbContext db) =>
+            string resumeId, AnalyzeAppliedRequest body, ClaimsPrincipal principal, AppDbContext db) =>
         {
             var userId = UserIdOf(principal);
             if (userId is null) return Error("未登录", 401);
-            var section = body?["section"]?.GetValue<string>();
-            var index = body?["index"] is JsonValue iv && iv.TryGetValue<int>(out var i) ? i : (int?)null;
+            var section = body.Section;
+            var index = body.Index;
             if (string.IsNullOrEmpty(section) || index is null) return Error("section 与 index 必填", 400);
 
             var resume = await db.Resumes.FirstOrDefaultAsync(r => r.Id == resumeId);
@@ -238,7 +230,7 @@ public static class AiEndpoints
             try { analysis = JsonNode.Parse(analysisJson); }
             catch (JsonException) { return Error("无效的 section / index", 400); }
             var sections = analysis?["sections"] as JsonObject;
-            if (sections is null || !new[] { "basic", "works", "projects", "skills" }.Contains(section) ||
+            if (sections is null || !new[] { ResumeSection.Basic, ResumeSection.Works, ResumeSection.Projects, ResumeSection.Skills }.Contains(section) ||
                 sections[section] is not JsonArray list ||
                 index >= list.Count || list[index.Value] is not JsonObject issue)
             {
@@ -298,11 +290,11 @@ public static class AiEndpoints
             var cb = streaming ? new SseWriter(http.Response) : null;
             if (cb is not null) await cb.InitAsync();
             var callbacks = cb is null ? null : new Analyzer.AnalyzeCallbacks(
-                OnReasoning: d => cb.SendAsync("reasoning", new { delta = d }, requestAborted).GetAwaiter().GetResult(),
-                OnContent: d => cb.SendAsync("content", new { delta = d }, requestAborted).GetAwaiter().GetResult());
+                OnReasoning: d => cb.SendAsync("reasoning", new { delta = d }, requestAborted),
+                OnContent: d => cb.SendAsync("content", new { delta = d }, requestAborted));
 
             var result = await analyzer.AnalyzeAsync(content, body.Jd, callbacks, body.Config, requestAborted);
-            if (result.LlmUsed) await RecordCallAsync(db, snapshot, userId, result, "analyze", resumeId);
+            if (result.LlmUsed) await RecordCallAsync(db, snapshot, userId, result, LlmCallKind.Analyze, resumeId);
 
             if (!string.IsNullOrWhiteSpace(body.Jd))
             {
@@ -314,14 +306,14 @@ public static class AiEndpoints
             if (resumeId is not null && string.IsNullOrWhiteSpace(body.Jd))
             {
                 var resume = await db.Resumes.FirstAsync(r => r.Id == resumeId);
-                resume.AnalysisJson = JsonSerializer.Serialize(result, AppJson.Options);
+                resume.AnalysisJson = JsonSerializer.Serialize(result, JsonDefaults.Options);
                 await db.SaveChangesAsync();
             }
 
             if (cb is null)
                 return Results.Json(new { analysis = result });
 
-            await cb.SendAsync("result", new { analysis = JsonSerializer.SerializeToElement(result, AppJson.Options) }, requestAborted);
+            await cb.SendAsync("result", new { analysis = JsonSerializer.SerializeToElement(result, JsonDefaults.Options) }, requestAborted);
             await cb.SendAsync("done", new { ok = true }, requestAborted);
             return Results.Empty;
         });

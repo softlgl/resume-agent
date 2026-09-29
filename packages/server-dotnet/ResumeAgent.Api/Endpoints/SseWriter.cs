@@ -7,7 +7,7 @@ namespace ResumeAgent.Api.Endpoints;
 
 public class SseWriter(HttpResponse? response)
 {
-    public static readonly JsonSerializerOptions JsonOpts = new()
+    public static readonly JsonSerializerOptions JsonOptions = new()
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
         DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.Never,
@@ -20,14 +20,14 @@ public class SseWriter(HttpResponse? response)
         response.Headers.CacheControl = "no-cache";
         response.Headers["Connection"] = "keep-alive";
         // 禁用响应缓冲，保证 reasoning/content 逐字推到前端
-        response.Body.FlushAsync();
+        await response.Body.FlushAsync();
     }
 
-    public async Task SendAsync(string evt, object? data, CancellationToken ct = default)
+    public async Task SendAsync(string eventName, object? data, CancellationToken ct = default)
     {
-        var json = JsonSerializer.Serialize(data, JsonOpts);
+        var json = JsonSerializer.Serialize(data, JsonOptions);
         if (response is null) return;
-        var bytes = Encoding.UTF8.GetBytes($"event: {evt}\ndata: {json}\n\n");
+        var bytes = Encoding.UTF8.GetBytes($"event: {eventName}\ndata: {json}\n\n");
         await response.Body.WriteAsync(bytes, ct);
         await response.Body.FlushAsync(ct);
     }

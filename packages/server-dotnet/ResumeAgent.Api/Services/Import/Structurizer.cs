@@ -59,15 +59,15 @@ public class Structurizer(ChatService chat, ProfileSnapshotService profiles)
 
     /// <summary>把纯文本归一化成 ResumeContent；无 LLM 或解析失败返回 null</summary>
     public async Task<ResumeContent?> StructurizeTextAsync(
-        string text, Action<string>? onReasoning = null, Action<string>? onContent = null,
+        string text, Func<string, Task>? onReasoning = null, Func<string, Task>? onContent = null,
         CancellationToken ct = default)
     {
         if (!profiles.IsAvailable()) return null;
         // maxTokens 给足够大的上限，让真实卡点收敛到 profile.maxOutput（推理模型与正文共享预算，偏小易截断）
         var outText = await chat.ChatStreamAsync(
         [
-            new("system", BuildSystemPrompt()),
-            new("user", $"以下是简历原文，请提取：\n\n{text}"),
+            new(ChatMessageRole.System, BuildSystemPrompt()),
+            new(ChatMessageRole.User, $"以下是简历原文，请提取：\n\n{text}"),
         ], new ChatOptionsEx { JsonSchema = ExtractSchema, Temperature = 0.1, MaxTokens = 262144 },
             onReasoning, onContent, ct: ct);
         if (string.IsNullOrEmpty(outText)) return null;

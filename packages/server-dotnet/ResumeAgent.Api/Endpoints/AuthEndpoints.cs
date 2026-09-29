@@ -18,7 +18,7 @@ public static class AuthEndpoints
     {
         var group = app.MapGroup("/auth");
 
-        group.MapPost("/register", async (AuthRequest body, AppDbContext db) =>
+        group.MapPost("/register", async (AuthRequest body, AppDbContext db, JwtTokenService jwt) =>
         {
             var username = body.Username?.Trim() ?? "";
             var password = body.Password ?? "";
@@ -29,10 +29,10 @@ public static class AuthEndpoints
             var user = new User { Username = username, Password = BCrypt.Net.BCrypt.HashPassword(password, 10) };
             db.Users.Add(user);
             await db.SaveChangesAsync();
-            return Results.Json(new { token = JwtTokenService.SignToken(user.Id), username });
+            return Results.Json(new { token = jwt.SignToken(user.Id), username });
         });
 
-        group.MapPost("/login", async (AuthRequest body, AppDbContext db) =>
+        group.MapPost("/login", async (AuthRequest body, AppDbContext db, JwtTokenService jwt) =>
         {
             var username = body.Username?.Trim() ?? "";
             var password = body.Password ?? "";
@@ -41,7 +41,7 @@ public static class AuthEndpoints
             var user = await db.Users.FirstOrDefaultAsync(u => u.Username == username);
             if (user is null || !BCrypt.Net.BCrypt.Verify(password, user.Password))
                 return Results.Json(new { error = "用户名或密码错误" }, statusCode: 401);
-            return Results.Json(new { token = JwtTokenService.SignToken(user.Id), username = user.Username });
+            return Results.Json(new { token = jwt.SignToken(user.Id), username = user.Username });
         });
 
         group.MapGet("/me", async (ClaimsPrincipal principal, AppDbContext db) =>

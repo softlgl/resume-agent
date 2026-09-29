@@ -3,7 +3,7 @@
 
 namespace ResumeAgent.Api.Common;
 
-public static class MySqlConn
+public static class MySqlConnectionString
 {
     public static string FromDatabaseUrl(string? raw)
     {

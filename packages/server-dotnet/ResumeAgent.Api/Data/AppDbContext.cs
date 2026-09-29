@@ -16,18 +16,21 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
         v => ToJson(v),
         v => FromJson(v))
     {
-        public static string ToJson(ResumeContent v) => JsonSerializer.Serialize(v, JsonOpts);
+        public static string ToJson(ResumeContent v) => JsonSerializer.Serialize(v, JsonOptions);
         public static ResumeContent FromJson(string v) =>
-            JsonSerializer.Deserialize<ResumeContent>(v, JsonOpts)?.Normalize() ?? ResumeContent.Empty();
+            JsonSerializer.Deserialize<ResumeContent>(v, JsonOptions)?.Normalize() ?? ResumeContent.Empty();
     }
 
     public DbSet<User> Users => Set<User>();
     public DbSet<AiModelProfile> AiModelProfiles => Set<AiModelProfile>();
     public DbSet<LlmCallLog> LlmCallLogs => Set<LlmCallLog>();
     public DbSet<Resume> Resumes => Set<Resume>();
+    public DbSet<AiChatSession> AiChatSessions => Set<AiChatSession>();
+    public DbSet<AiChatMessage> AiChatMessages => Set<AiChatMessage>();
+    public DbSet<AiRevision> AiRevisions => Set<AiRevision>();
 
     /// <summary>camelCase（与 Prisma 写入的 JSON 键名一致），大小写不敏感、容忍 null</summary>
-    public static readonly JsonSerializerOptions JsonOpts = new()
+    public static readonly JsonSerializerOptions JsonOptions = new()
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
         PropertyNameCaseInsensitive = true,
@@ -93,6 +96,57 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
             e.HasIndex(x => x.UserId);
         });
 
+        mb.Entity<AiChatSession>(e =>
+        {
+            e.ToTable("AiChatSession");
+            e.Property(x => x.Id).HasColumnName("id").HasMaxLength(32).ValueGeneratedNever();
+            e.Property(x => x.ResumeId).HasColumnName("resumeId").HasMaxLength(32);
+            e.Property(x => x.UserId).HasColumnName("userId").HasMaxLength(32);
+            e.Property(x => x.Title).HasColumnName("title").HasMaxLength(128);
+            e.Property(x => x.Focus).HasColumnName("focus").HasColumnType("text");
+            e.Property(x => x.Jd).HasColumnName("jd").HasColumnType("text");
+            e.Property(x => x.Archived).HasColumnName("archived");
+            e.Property(x => x.LastMessageAt).HasColumnName("lastMessageAt").HasColumnType("datetime(3)");
+            e.Property(x => x.CreatedAt).HasColumnName("createdAt").HasColumnType("datetime(3)");
+            e.HasIndex(x => new { x.ResumeId, x.LastMessageAt });
+            e.HasIndex(x => new { x.UserId, x.LastMessageAt });
+        });
+
+        mb.Entity<AiChatMessage>(e =>
+        {
+            e.ToTable("AiChatMessage");
+            e.Property(x => x.Id).HasColumnName("id").HasMaxLength(32).ValueGeneratedNever();
+            e.Property(x => x.SessionId).HasColumnName("sessionId").HasMaxLength(32);
+            e.Property(x => x.Role).HasColumnName("role").HasMaxLength(16);
+            e.Property(x => x.Content).HasColumnName("content").HasColumnType("text");
+            e.Property(x => x.Edits).HasColumnName("edits").HasColumnType("json");
+            e.Property(x => x.AppliedIndexes).HasColumnName("appliedIndexes").HasColumnType("json");
+            e.Property(x => x.Reasoning).HasColumnName("reasoning").HasColumnType("text");
+            e.Property(x => x.CreatedAt).HasColumnName("createdAt").HasColumnType("datetime(3)");
+            e.HasIndex(x => new { x.SessionId, x.CreatedAt });
+        });
+
+        mb.Entity<AiRevision>(e =>
+        {
+            e.ToTable("AiRevision");
+            e.Property(x => x.Id).HasColumnName("id").HasMaxLength(32).ValueGeneratedNever();
+            e.Property(x => x.ResumeId).HasColumnName("resumeId").HasMaxLength(32);
+            e.Property(x => x.UserId).HasColumnName("userId").HasMaxLength(32);
+            e.Property(x => x.Source).HasColumnName("source").HasMaxLength(16);
+            e.Property(x => x.Op).HasColumnName("op").HasMaxLength(16);
+            e.Property(x => x.Section).HasColumnName("section").HasMaxLength(32);
+            e.Property(x => x.Field).HasColumnName("field").HasMaxLength(128);
+            e.Property(x => x.Label).HasColumnName("label").HasMaxLength(256);
+            e.Property(x => x.BeforeValue).HasColumnName("beforeValue").HasColumnType("text");
+            e.Property(x => x.AfterValue).HasColumnName("afterValue").HasColumnType("text");
+            e.Property(x => x.ItemId).HasColumnName("itemId").HasMaxLength(32);
+            e.Property(x => x.SessionId).HasColumnName("sessionId").HasMaxLength(32);
+            e.Property(x => x.MessageId).HasColumnName("messageId").HasMaxLength(32);
+            e.Property(x => x.RevertedAt).HasColumnName("revertedAt").HasColumnType("datetime(3)");
+            e.Property(x => x.CreatedAt).HasColumnName("createdAt").HasColumnType("datetime(3)");
+            e.HasIndex(x => new { x.ResumeId, x.CreatedAt });
+        });
+
     }
 
     /// <summary>对齐 Prisma @updatedAt：Resume 更新时自动刷新 UpdatedAt；新实体补默认 id/时间</summary>
@@ -127,5 +181,24 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
             if (entry.State == EntityState.Added && string.IsNullOrEmpty(entry.Entity.Id)) entry.Entity.Id = Cuid.New();
         foreach (var entry in ChangeTracker.Entries<LlmCallLog>())
             if (entry.State == EntityState.Added && string.IsNullOrEmpty(entry.Entity.Id)) entry.Entity.Id = Cuid.New();
+        foreach (var entry in ChangeTracker.Entries<AiChatSession>())
+            if (entry.State == EntityState.Added)
+            {
+                if (string.IsNullOrEmpty(entry.Entity.Id)) entry.Entity.Id = Cuid.New();
+                if (entry.Entity.CreatedAt == default) entry.Entity.CreatedAt = DateTime.Now;
+                if (entry.Entity.LastMessageAt == default) entry.Entity.LastMessageAt = DateTime.Now;
+            }
+        foreach (var entry in ChangeTracker.Entries<AiChatMessage>())
+            if (entry.State == EntityState.Added)
+            {
+                if (string.IsNullOrEmpty(entry.Entity.Id)) entry.Entity.Id = Cuid.New();
+                if (entry.Entity.CreatedAt == default) entry.Entity.CreatedAt = DateTime.Now;
+            }
+        foreach (var entry in ChangeTracker.Entries<AiRevision>())
+            if (entry.State == EntityState.Added)
+            {
+                if (string.IsNullOrEmpty(entry.Entity.Id)) entry.Entity.Id = Cuid.New();
+                if (entry.Entity.CreatedAt == default) entry.Entity.CreatedAt = DateTime.Now;
+            }
     }
 }

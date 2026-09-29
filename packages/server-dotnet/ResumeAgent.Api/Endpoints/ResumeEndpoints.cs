@@ -73,8 +73,12 @@ public static class ResumeEndpoints
             var userId = principal.UserId()!;
             var resume = await db.Resumes.FirstOrDefaultAsync(r => r.Id == id && r.UserId == userId);
             if (resume is null) return Error("简历不存在", 404);
-            // 级联清理：LlmCallLog.resumeId 无外键约束，事务内手动删除调用日志
+            // 级联清理：以下表的 resumeId 无外键约束，删除简历前手动删除其关联数据（等价于数据库级联）
+            var sessionIds = await db.AiChatSessions.Where(s => s.ResumeId == id).Select(s => s.Id).ToListAsync();
             await using var tx = await db.Database.BeginTransactionAsync();
+            await db.AiChatMessages.Where(m => sessionIds.Contains(m.SessionId)).ExecuteDeleteAsync();
+            await db.AiChatSessions.Where(s => s.ResumeId == id).ExecuteDeleteAsync();
+            await db.AiRevisions.Where(r => r.ResumeId == id).ExecuteDeleteAsync();
             await db.LlmCallLogs.Where(l => l.ResumeId == id).ExecuteDeleteAsync();
             await db.Resumes.Where(r => r.Id == id).ExecuteDeleteAsync();
             await tx.CommitAsync();

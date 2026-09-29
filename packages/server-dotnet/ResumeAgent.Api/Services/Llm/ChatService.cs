@@ -8,28 +8,9 @@ using System.ClientModel;
 using System.Text.Json;
 using Microsoft.Extensions.AI;
 using OpenAI;
+using ResumeAgent.Api.Contracts;
 
 namespace ResumeAgent.Api.Services.Llm;
-
-public class ChatMessageItem(string role, string content)
-{
-    public string Role { get; set; } = role;
-    public string Content { get; set; } = content;
-}
-
-public class ChatOptionsEx
-{
-    public double? Temperature { get; set; }
-    public int? MaxTokens { get; set; }
-    public string? JsonSchema { get; set; } // 期望的结构化输出 JSON Schema（可选）
-}
-
-public class ChatResult
-{
-    public string Text { get; set; } = "";
-    public int? PromptTokens { get; set; }
-    public int? CompletionTokens { get; set; }
-}
 
 public class ChatService(ProfileSnapshotService profiles, ILogger<ChatService> logger)
 {
@@ -65,8 +46,8 @@ public class ChatService(ProfileSnapshotService profiles, ILogger<ChatService> l
             messages.Add(new ChatMessage(
                 m.Role switch
                 {
-                    "system" => ChatRole.System,
-                    "assistant" => ChatRole.Assistant,
+                    ChatMessageRole.System => ChatRole.System,
+                    ChatMessageRole.Assistant => ChatRole.Assistant,
                     _ => ChatRole.User,
                 }, m.Content));
         return messages;
@@ -114,10 +95,11 @@ public class ChatService(ProfileSnapshotService profiles, ILogger<ChatService> l
         }
     }
 
-    /// <summary>流式（对齐 chatStream）：reasoning delta 实时回调，content delta 累加并回调，返回最终全文；失败返回 null</summary>
+    /// <summary>流式（对齐 chatStream）：reasoning delta 实时回调，content delta 累加并回调，返回最终全文；失败返回 null
+    /// 回调为异步——SSE 逐字推送本身是 I/O，同步回调会逼调用方 sync-over-async。</summary>
     public async Task<string?> ChatStreamAsync(
         IReadOnlyList<ChatMessageItem> items, ChatOptionsEx? opts = null,
-        Action<string>? onReasoning = null, Action<string>? onContent = null,
+        Func<string, Task>? onReasoning = null, Func<string, Task>? onContent = null,
         LlmConfig? runtimeOverride = null, CancellationToken ct = default)
     {
         var cfg = profiles.GetConfig(runtimeOverride);
@@ -130,7 +112,7 @@ public class ChatService(ProfileSnapshotService profiles, ILogger<ChatService> l
         if (cfg.Provider != LlmProvider.Openai)
         {
             IReadOnlyList<ChatMessageItem> rawItems = prepend
-                ? new[] { new ChatMessageItem("system", JsonOnlySystemPrompt) }.Concat(items).ToList()
+                ? new[] { new ChatMessageItem(ChatMessageRole.System, JsonOnlySystemPrompt) }.Concat(items).ToList()
                 : items;
             return await RawOpenAiStream.StreamAsync(
                 cfg, rawItems, opts,
@@ -153,11 +135,11 @@ public class ChatService(ProfileSnapshotService profiles, ILogger<ChatService> l
                     switch (part)
                     {
                         case TextReasoningContent rc when !string.IsNullOrEmpty(rc.Text):
-                            onReasoning?.Invoke(rc.Text);
+                            if (onReasoning is not null) await onReasoning(rc.Text);
                             break;
                         case TextContent tc when !string.IsNullOrEmpty(tc.Text):
                             accum.Append(tc.Text);
-                            onContent?.Invoke(tc.Text);
+                            if (onContent is not null) await onContent(tc.Text);
                             break;
                         case UsageContent:
                             break;
@@ -166,8 +148,8 @@ public class ChatService(ProfileSnapshotService profiles, ILogger<ChatService> l
                 // 兜底：DeepSeek 等非标准字段可能挂在 AdditionalProperties（reasoning_content / reasoning）
                 if (update.AdditionalProperties is not null)
                     foreach (var key in new[] { "reasoning_content", "reasoning" })
-                        if (update.AdditionalProperties.TryGetValue(key, out var v) && v is string s && s.Length > 0)
-                            onReasoning?.Invoke(s);
+                        if (update.AdditionalProperties.TryGetValue(key, out var v) && v is string s && s.Length > 0 && onReasoning is not null)
+                            await onReasoning(s);
             }
         }
         catch (OperationCanceledException) { throw; }

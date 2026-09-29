@@ -16,8 +16,8 @@ namespace ResumeAgent.Api.Services.Export;
 
 public static class DocxRenderer
 {
-    private static int S(double pt) => Print.HalfPt(pt);
-    private static int Tw(double pt) => Print.Tw(pt);
+    private static int S(double pt) => PrintTokens.HalfPt(pt);
+    private static int Tw(double pt) => PrintTokens.Tw(pt);
     private static string Hex(string c) => c.TrimStart('#');
 
     private static Run Tr(string text, bool bold = false, int? size = null, string? color = null, string? shading = null)
@@ -60,8 +60,8 @@ public static class DocxRenderer
         new ParagraphProperties(Spacing(before: 0, after: 0, line: Tw(heightPt), exact: true)));
 
     private static Paragraph BodyParagraph(string text, TemplateColors c, string? color = null) => new(
-        new ParagraphProperties(Spacing(after: Print.BodyAfter)),
-        Tr(text, size: S(Print.Body), color: color ?? c.Text));
+        new ParagraphProperties(Spacing(after: PrintTokens.BodyAfter)),
+        Tr(text, size: S(PrintTokens.Body), color: color ?? c.Text));
 
     public static byte[] Render(ResumeContent content, string templateId, IReadOnlyList<string> pageBreakIds)
     {
@@ -78,8 +78,8 @@ public static class DocxRenderer
         {
             // 主内容区宽度（twips）：双栏=主栏宽-主栏单元格左右边距(800×2)；单栏=页宽-左右页边距
             var contentW = tpl.Layout == "two-column" && tpl.SidebarBasic
-                ? (int)Math.Round((Print.PageWidth - Print.SidebarWidth) * 20) - 1600
-                : (int)Math.Round((Print.PageWidth - Print.Margin * 2) * 20);
+                ? (int)Math.Round((PrintTokens.PageWidth - PrintTokens.SidebarWidth) * 20) - 1600
+                : (int)Math.Round((PrintTokens.PageWidth - PrintTokens.Margin * 2) * 20);
             const int barW = 40; // 竖条宽 2pt
 
             var barCell = new TableCell(
@@ -105,7 +105,7 @@ public static class DocxRenderer
                 // EXACT 15.5pt 行高压紧行高（13pt 宋体加粗可容纳）
                 new Paragraph(
                     new ParagraphProperties(Spacing(before: 0, after: 0, line: 310, exact: true)),
-                    Tr(text, bold: true, size: S(Print.SectionTitle), color: c.Primary)));
+                    Tr(text, bold: true, size: S(PrintTokens.SectionTitle), color: c.Primary)));
 
             var table = new Table(
                 new TableProperties(
@@ -118,9 +118,9 @@ public static class DocxRenderer
                 new TableGrid(new GridColumn { Width = barW.ToString() }, new GridColumn { Width = (contentW - barW).ToString() }),
                 new TableRow(barCell, textCell));
 
-            children.Add(Spacer(Print.SectionBefore + (first ? 0 : Print.BlockAfter)));
+            children.Add(Spacer(PrintTokens.SectionBefore + (first ? 0 : PrintTokens.BlockAfter)));
             children.Add(table);
-            children.Add(Spacer(Print.SectionAfter));
+            children.Add(Spacer(PrintTokens.SectionAfter));
         }
 
         // 条目内标题：左标题右时间
@@ -132,8 +132,8 @@ public static class DocxRenderer
         {
             const int dateW = 1700; // 日期列宽："2022-01 - 2023-06" @9.5pt ≈ 1620 twips，留余量
             var contentW = tpl.Layout == "two-column" && tpl.SidebarBasic
-                ? (int)Math.Round((Print.PageWidth - Print.SidebarWidth) * 20) - 1600
-                : (int)Math.Round((Print.PageWidth - Print.Margin * 2) * 20);
+                ? (int)Math.Round((PrintTokens.PageWidth - PrintTokens.SidebarWidth) * 20) - 1600
+                : (int)Math.Round((PrintTokens.PageWidth - PrintTokens.Margin * 2) * 20);
             var zeroMargin = () => new TableCellMargin(
                 new TopMargin { Width = "0", Type = TableWidthUnitValues.Dxa },
                 new TableCellLeftMargin { Width = (short)0, Type = TableWidthValues.Dxa },
@@ -158,7 +158,7 @@ public static class DocxRenderer
                             zeroMargin(),
                             new TableCellVerticalAlignment { Val = TableVerticalAlignmentValues.Top }),
                         new Paragraph(new ParagraphProperties(Spacing()),
-                            Tr(left, bold: true, size: S(Print.Body * Print.InlineTitleScale), color: c.Text))),
+                            Tr(left, bold: true, size: S(PrintTokens.Body * PrintTokens.InlineTitleScale), color: c.Text))),
                     new TableCell(
                         new TableCellProperties(
                             new TableCellWidth { Width = dateW.ToString(), Type = TableWidthUnitValues.Dxa },
@@ -168,11 +168,11 @@ public static class DocxRenderer
                             new ParagraphProperties(
                                 new Justification { Val = JustificationValues.Right },
                                 Spacing()),
-                            Tr(right, size: S(Print.Small), color: c.Muted)))));
+                            Tr(right, size: S(PrintTokens.Small), color: c.Muted)))));
 
-            children.Add(Spacer(firstInBlock ? 0 : Print.BlockAfter));
+            children.Add(Spacer(firstInBlock ? 0 : PrintTokens.BlockAfter));
             children.Add(table);
-            children.Add(Spacer(Print.BulletAfter));
+            children.Add(Spacer(PrintTokens.BulletAfter));
         }
 
         void BulletLines(List<string> linesList)
@@ -183,8 +183,8 @@ public static class DocxRenderer
                 children.Add(new Paragraph(
                     new ParagraphProperties(
                         new Indentation { Left = multi ? "360" : "0" },
-                        Spacing(after: Print.BulletAfter)),
-                    Tr(multi ? $"- {l}" : l, size: S(multi ? Print.Bullet : Print.Body), color: c.Text)));
+                        Spacing(after: PrintTokens.BulletAfter)),
+                    Tr(multi ? $"- {l}" : l, size: S(multi ? PrintTokens.Bullet : PrintTokens.Body), color: c.Text)));
             }
         }
 
@@ -237,15 +237,15 @@ public static class DocxRenderer
                         // 技能胶囊：分类加粗 + 每个技能一个底色 run（与预览/PDF 一致）
                         // 半角空格宽度 = 字号的一半：分类与冒号间 2.5pt（5pt 字号空格），冒号与胶囊间 1pt（2pt 字号空格）
                         var soft = Templates.Soften(c.Primary, 0.08);
-                        var pProps = new ParagraphProperties(Spacing(after: Print.BodyAfter));
+                        var pProps = new ParagraphProperties(Spacing(after: PrintTokens.BodyAfter));
                         var para = new Paragraph(pProps);
-                        para.Append(Tr(g.Category, bold: true, size: S(Print.Body), color: c.Text));
+                        para.Append(Tr(g.Category, bold: true, size: S(PrintTokens.Body), color: c.Text));
                         para.Append(Tr(" ", size: S(5)));
-                        para.Append(Tr("：", bold: true, size: S(Print.Body), color: c.Text));
+                        para.Append(Tr("：", bold: true, size: S(PrintTokens.Body), color: c.Text));
                         foreach (var s in Templates.SplitSkills(g.Items))
                         {
                             para.Append(Tr(" ", size: S(2)));
-                            para.Append(Tr($" {s} ", size: S(Print.Bullet), color: c.Primary, shading: soft));
+                            para.Append(Tr($" {s} ", size: S(PrintTokens.Bullet), color: c.Primary, shading: soft));
                         }
                         children.Add(para);
                     }
@@ -262,16 +262,16 @@ public static class DocxRenderer
             var sidebarChildren = new List<OpenXmlElement>
             {
                 new Paragraph(
-                    new ParagraphProperties(Spacing(before: 40, after: Print.SideNameAfter)),
-                    Tr(b.Name.Length > 0 ? b.Name : "姓名", bold: true, size: S(Print.SidebarName), color: "FFFFFF")),
+                    new ParagraphProperties(Spacing(before: 40, after: PrintTokens.SideNameAfter)),
+                    Tr(b.Name.Length > 0 ? b.Name : "姓名", bold: true, size: S(PrintTokens.SidebarName), color: "FFFFFF")),
             };
             if (b.Title.Length > 0)
                 sidebarChildren.Add(new Paragraph(
-                    new ParagraphProperties(Spacing(after: Print.SideTitleAfter)),
-                    Tr(b.Title, size: S(Print.SidebarTitle), color: "CBD5E1")));
+                    new ParagraphProperties(Spacing(after: PrintTokens.SideTitleAfter)),
+                    Tr(b.Title, size: S(PrintTokens.SidebarTitle), color: "CBD5E1")));
             sidebarChildren.Add(new Paragraph(
-                new ParagraphProperties(Spacing(before: Print.SideLabelBefore, after: Print.SideLabelAfter)),
-                Tr("联系方式", bold: true, size: S(Print.SidebarLabel), color: "FFFFFF")));
+                new ParagraphProperties(Spacing(before: PrintTokens.SideLabelBefore, after: PrintTokens.SideLabelAfter)),
+                Tr("联系方式", bold: true, size: S(PrintTokens.SidebarLabel), color: "FFFFFF")));
             if (b.Phone.Length > 0) sidebarChildren.Add(SideField($"电话：{b.Phone}"));
             if (b.Email.Length > 0) sidebarChildren.Add(SideField($"邮箱：{b.Email}"));
             if (b.Location.Length > 0) sidebarChildren.Add(SideField($"地址：{b.Location}"));
@@ -279,23 +279,23 @@ public static class DocxRenderer
             foreach (var l in extra) sidebarChildren.Add(SideField(l));
 
             Paragraph SideField(string t) => new(
-                new ParagraphProperties(Spacing(after: Print.SideFieldAfter)),
-                Tr(t, size: S(Print.SidebarField), color: "E2E8F0"));
+                new ParagraphProperties(Spacing(after: PrintTokens.SideFieldAfter)),
+                Tr(t, size: S(PrintTokens.SidebarField), color: "E2E8F0"));
 
             var mainChildren = new List<OpenXmlElement>();
             foreach (var k in tpl.SectionOrder) RenderSection(k);
             if (children.Count == 0)
-                mainChildren.Add(new Paragraph(Tr("（暂无内容）", size: S(Print.Body), color: c.Text)));
+                mainChildren.Add(new Paragraph(Tr("（暂无内容）", size: S(PrintTokens.Body), color: c.Text)));
             else
                 mainChildren.AddRange(children);
 
             // 侧栏/主区宽度（twips），与 PDF 全页侧栏比例一致
-            var sideTw = (int)Math.Round(Print.SidebarWidth * 20);
-            var mainTw = (int)Math.Round((Print.PageWidth - Print.SidebarWidth) * 20);
-            var tableTw = (int)Math.Round(Print.PageWidth * 20);
+            var sideTw = (int)Math.Round(PrintTokens.SidebarWidth * 20);
+            var mainTw = (int)Math.Round((PrintTokens.PageWidth - PrintTokens.SidebarWidth) * 20);
+            var tableTw = (int)Math.Round(PrintTokens.PageWidth * 20);
             // 主区单元格上下 padding = PRINT.margin；侧栏水平 padding = sidebarPad
-            var mainPadV = Print.Margin;
-            var sideTwPad = Tw(Print.SidebarPad);
+            var mainPadV = PrintTokens.Margin;
+            var sideTwPad = Tw(PrintTokens.SidebarPad);
             var sidebarCell = new TableCell(
                 new TableCellProperties(
                     new TableCellWidth { Width = sideTw.ToString(), Type = TableWidthUnitValues.Dxa },
@@ -318,7 +318,7 @@ public static class DocxRenderer
                     new TableCellVerticalAlignment { Val = TableVerticalAlignmentValues.Top }));
             mainCell.Append([.. mainChildren]);
 
-            var pageTw = (int)Math.Round(Print.PageHeight * 20);
+            var pageTw = (int)Math.Round(PrintTokens.PageHeight * 20);
             // 表格后「隐藏段落标记」空段落（vanish），防止 Word 自动补默认字号空段导致白边
             var tailPara = new Paragraph(
                 new ParagraphProperties(
@@ -350,21 +350,21 @@ public static class DocxRenderer
                 Spacing(after: after));
             children.Clear();
             children.Add(new Paragraph(
-                HeaderProps(Print.NameAfter),
-                Tr(b.Name.Length > 0 ? b.Name : "姓名", bold: true, size: S(Print.Name), color: c.Primary)));
+                HeaderProps(PrintTokens.NameAfter),
+                Tr(b.Name.Length > 0 ? b.Name : "姓名", bold: true, size: S(PrintTokens.Name), color: c.Primary)));
             if (b.Title.Length > 0)
                 children.Add(new Paragraph(
-                    HeaderProps(Print.TitleAfter),
-                    Tr(b.Title, size: S(Print.Title), color: c.Muted)));
+                    HeaderProps(PrintTokens.TitleAfter),
+                    Tr(b.Title, size: S(PrintTokens.Title), color: c.Muted)));
             var contact = string.Join("  |  ", new[] { b.Phone, b.Email, b.Location, b.Website }.Where(s => s.Length > 0));
             if (contact.Length > 0)
                 children.Add(new Paragraph(
-                    HeaderProps(Print.ContactAfter),
-                    Tr(contact, size: S(Print.Small), color: c.Muted)));
+                    HeaderProps(PrintTokens.ContactAfter),
+                    Tr(contact, size: S(PrintTokens.Small), color: c.Muted)));
             if (extra.Count > 0)
                 children.Add(new Paragraph(
-                    HeaderProps(Print.ExtraAfter),
-                    Tr(string.Join("  |  ", extra), size: S(Print.Small), color: c.Muted)));
+                    HeaderProps(PrintTokens.ExtraAfter),
+                    Tr(string.Join("  |  ", extra), size: S(PrintTokens.Small), color: c.Muted)));
             foreach (var k in tpl.SectionOrder) RenderSection(k);
             bodyChildren = [.. children];
         }
@@ -383,13 +383,13 @@ public static class DocxRenderer
             // 页面设置：A4；双栏 0 边距（header/footer/gutter 显式归零），单栏 40pt 边距
             var isTwoCol = tpl.Layout == "two-column";
             var secPr = new SectionProperties(
-                new PageSize { Width = (UInt32Value)(uint)Math.Round(Print.PageWidth * 20), Height = (UInt32Value)(uint)Math.Round(Print.PageHeight * 20) },
+                new PageSize { Width = (UInt32Value)(uint)Math.Round(PrintTokens.PageWidth * 20), Height = (UInt32Value)(uint)Math.Round(PrintTokens.PageHeight * 20) },
                 new PageMargin
                 {
-                    Top = isTwoCol ? 0 : Tw(Print.Margin),
-                    Right = (UInt32Value)(uint)(isTwoCol ? 0 : Tw(Print.Margin)),
-                    Bottom = isTwoCol ? 0 : Tw(Print.Margin),
-                    Left = (UInt32Value)(uint)(isTwoCol ? 0 : Tw(Print.Margin)),
+                    Top = isTwoCol ? 0 : Tw(PrintTokens.Margin),
+                    Right = (UInt32Value)(uint)(isTwoCol ? 0 : Tw(PrintTokens.Margin)),
+                    Bottom = isTwoCol ? 0 : Tw(PrintTokens.Margin),
+                    Left = (UInt32Value)(uint)(isTwoCol ? 0 : Tw(PrintTokens.Margin)),
                     Header = (UInt32Value)0U, Footer = (UInt32Value)0U, Gutter = (UInt32Value)0U,
                 });
             body.Append(secPr);

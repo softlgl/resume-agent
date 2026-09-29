@@ -3,11 +3,16 @@
 // 单例 + 锁，替代 TS 的模块级可变变量。
 
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
+using ResumeAgent.Api.Common;
 using ResumeAgent.Api.Data;
 
 namespace ResumeAgent.Api.Services.Llm;
 
-public class ProfileSnapshotService(IServiceScopeFactory scopeFactory, ILogger<ProfileSnapshotService> logger)
+public class ProfileSnapshotService(
+    IServiceScopeFactory scopeFactory,
+    IOptions<LlmEnvOptions> envOptions,
+    ILogger<ProfileSnapshotService> logger)
 {
     private readonly object _lock = new();
     private List<LlmProfile> _profiles = [];
@@ -69,10 +74,10 @@ public class ProfileSnapshotService(IServiceScopeFactory scopeFactory, ILogger<P
         {
             if (_envParsed) return _envConfig;
             _envParsed = true;
-            var provider = LlmDefaults.Parse(Environment.GetEnvironmentVariable("LLM_PROVIDER")) ?? LlmProvider.Deepseek;
-            var apiKey = Environment.GetEnvironmentVariable("LLM_API_KEY")?.Trim();
+            var env = envOptions.Value;
+            var provider = LlmDefaults.Parse(env.Provider) ?? LlmProvider.Deepseek;
             var def = LlmDefaults.All[provider];
-            if (!LlmDefaults.IsLocal(provider) && string.IsNullOrEmpty(apiKey))
+            if (!LlmDefaults.IsLocal(provider) && string.IsNullOrEmpty(env.ApiKey))
             {
                 _envConfig = null;
             }
@@ -81,9 +86,9 @@ public class ProfileSnapshotService(IServiceScopeFactory scopeFactory, ILogger<P
                 _envConfig = new LlmConfig
                 {
                     Provider = provider,
-                    ApiKey = apiKey ?? "",
-                    BaseUrl = Environment.GetEnvironmentVariable("LLM_BASE_URL")?.Trim() ?? def.BaseUrl,
-                    Model = Environment.GetEnvironmentVariable("LLM_MODEL")?.Trim() ?? def.Model,
+                    ApiKey = env.ApiKey ?? "",
+                    BaseUrl = env.BaseUrl ?? def.BaseUrl,
+                    Model = env.Model ?? def.Model,
                     MaxContext = def.MaxContext,
                     MaxOutput = def.MaxOutput,
                 };
