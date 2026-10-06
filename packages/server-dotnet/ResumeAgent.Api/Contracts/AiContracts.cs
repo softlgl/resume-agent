@@ -12,7 +12,7 @@ public sealed record AnalyzeRequest(
 public sealed record AiConfigRequest(
     string? Action = null, string? Id = null, string? Provider = null, string? Name = null,
     string? ApiKey = null, string? BaseUrl = null, string? Model = null,
-    int? MaxContext = null, int? MaxOutput = null);
+    int? MaxContext = null, int? MaxOutput = null, string? ThinkingMode = null);
 
 /// <summary>PATCH /ai/analyze/{resumeId}/applied</summary>
 public sealed record AnalyzeAppliedRequest(string? Section = null, int? Index = null);

@@ -14,6 +14,11 @@ const PROVIDER_LIMITS: Record<string, { maxContext: number; maxOutput: number }>
 };
 const DEFAULT_LIMITS = PROVIDER_LIMITS.ollama;
 
+// 思考开关三态（与后端 thinkingMode 取值对齐）：列表用短标签，表单用完整说明
+const THINKING_MODE_SHORT: Record<string, string> = { follow: "跟随", on: "开启", off: "关闭" };
+// 无可靠「思考开关」参数的 provider：即使选了开启/关闭，后端也会按跟随默认处理
+const PROVIDERS_WITHOUT_THINKING_SWITCH = ["lmstudio"];
+
 // 全局 LLM 模型管理：多模型 profiles 的增删改 / 切换当前模型。
 // 采用「同一层内视图切换」：列表视图 ↔ 表单视图，不在弹窗上再叠加弹窗，
 // 减少层级、体验更顺。作为全局设置在多个入口复用（AI 分析面板、编辑器顶栏等）。
@@ -121,6 +126,7 @@ export default function ModelManager({ open }: { open: boolean }) {
               </div>
               <div className="mt-1 text-slate-500 leading-relaxed">
                 {m.provider} · {m.model}<br />
+                思考：{THINKING_MODE_SHORT[m.thinkingMode] ?? "跟随"}<br />
                 {m.baseUrl}<br />
                 API Key: {m.apiKeyMasked || "—"}
               </div>
@@ -156,6 +162,7 @@ function ModelForm({
     model: editing?.model ?? "",
     maxContext: editing?.maxContext ?? (PROVIDER_LIMITS[editing?.provider ?? ""] ?? DEFAULT_LIMITS).maxContext,
     maxOutput: editing?.maxOutput ?? (PROVIDER_LIMITS[editing?.provider ?? ""] ?? DEFAULT_LIMITS).maxOutput,
+    thinkingMode: editing?.thinkingMode ?? "follow",
     apiKey: "",
   });
   const [llmStatus, setLlmStatus] = useState<"idle" | "saving" | "saved" | "failed">("idle");
@@ -171,6 +178,7 @@ function ModelForm({
           model: form.model,
           maxContext: Number(form.maxContext) || undefined,
           maxOutput: Number(form.maxOutput) || undefined,
+          thinkingMode: form.thinkingMode,
           apiKey: form.apiKey || undefined,
         });
       } else {
@@ -181,6 +189,7 @@ function ModelForm({
           model: form.model,
           maxContext: Number(form.maxContext) || undefined,
           maxOutput: Number(form.maxOutput) || undefined,
+          thinkingMode: form.thinkingMode,
           apiKey: form.apiKey,
         });
       }
@@ -268,6 +277,23 @@ function ModelForm({
           />
         </label>
       </div>
+      <label className="block text-xs text-slate-500">
+        思考开关
+        <select
+          value={form.thinkingMode}
+          onChange={(e) => setForm({ ...form, thinkingMode: e.target.value })}
+          className="mt-1 w-full rounded-md border border-slate-200 bg-white px-2 py-1.5 text-sm"
+        >
+          <option value="follow">跟随模型默认</option>
+          <option value="on">强制开启思考</option>
+          <option value="off">强制关闭思考</option>
+        </select>
+        {PROVIDERS_WITHOUT_THINKING_SWITCH.includes(form.provider) && (
+          <span className="mt-0.5 block text-[10px] text-slate-400">
+            该 provider 无可靠参数，将按「跟随模型默认」处理
+          </span>
+        )}
+      </label>
       {!["ollama", "lmstudio", "vllm"].includes(form.provider) && (
         <label className="block text-xs text-slate-500">
           API Key{editing ? "（留空则不修改）" : ""}

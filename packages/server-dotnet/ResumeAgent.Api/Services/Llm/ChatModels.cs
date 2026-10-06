@@ -1,5 +1,6 @@
 // ChatService 的入参 / 出参模型（对齐 llm.ts 的 ChatMessage / ChatOptions）
 
+using System.Text.Json;
 using System.Text.Json.Serialization;
 
 namespace ResumeAgent.Api.Services.Llm;
@@ -39,13 +40,66 @@ public sealed record OpenAiChatRequest
     [JsonPropertyName("response_format")]
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public OpenAiResponseFormat? ResponseFormat { get; init; }
+
+    // ---- 思考开关相关：各家非标准扩展字段，默认 null 不参与序列化，由 LlmThinking.Apply 注入 ----
+    [JsonPropertyName("enable_thinking")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public bool? EnableThinking { get; init; }
+
+    [JsonPropertyName("think")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public bool? Think { get; init; }
+
+    [JsonPropertyName("reasoning_effort")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? ReasoningEffort { get; init; }
+
+    [JsonPropertyName("thinking")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public OpenAiThinking? Thinking { get; init; }
+
+    [JsonPropertyName("chat_template_kwargs")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public OpenAiChatTemplateKwargs? ChatTemplateKwargs { get; init; }
 }
+
+/// <summary>deepseek / doubao 的思考开关对象</summary>
+public sealed record OpenAiThinking([property: JsonPropertyName("type")] string Type);
+
+/// <summary>vllm 的对话模板开关对象</summary>
+public sealed record OpenAiChatTemplateKwargs([property: JsonPropertyName("enable_thinking")] bool EnableThinking);
 
 public sealed record OpenAiMessage(
     [property: JsonPropertyName("role")] string Role,
     [property: JsonPropertyName("content")] string Content);
 
-public sealed record OpenAiResponseFormat([property: JsonPropertyName("type")] string Type);
+public sealed record OpenAiResponseFormat(
+    [property: JsonPropertyName("type")] string Type,
+    [property: JsonPropertyName("json_schema"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    OpenAiJsonSchema? JsonSchema = null);
+
+/// <summary>openai 结构化输出（对齐 TS 的 name=resume_analysis / strict=true）</summary>
+public sealed record OpenAiJsonSchema(
+    [property: JsonPropertyName("name")] string Name,
+    [property: JsonPropertyName("schema")] JsonElement Schema,
+    [property: JsonPropertyName("strict")] bool Strict);
+
+/// <summary>非流式响应：只声明关心的字段，未知字段由序列化器忽略</summary>
+public sealed record OpenAiCompletionResponse(
+    [property: JsonPropertyName("choices")] List<OpenAiCompletionChoice>? Choices,
+    [property: JsonPropertyName("usage")] OpenAiUsage? Usage);
+
+public sealed record OpenAiCompletionChoice(
+    [property: JsonPropertyName("message")] OpenAiResponseMessage? Message);
+
+public sealed record OpenAiResponseMessage(
+    [property: JsonPropertyName("content")] string? Content,
+    [property: JsonPropertyName("reasoning_content")] string? ReasoningContent,
+    [property: JsonPropertyName("reasoning")] string? Reasoning);
+
+public sealed record OpenAiUsage(
+    [property: JsonPropertyName("prompt_tokens")] int? PromptTokens,
+    [property: JsonPropertyName("completion_tokens")] int? CompletionTokens);
 
 /// <summary>流式分片：只声明关心的字段，未知字段由序列化器忽略</summary>
 public sealed record OpenAiStreamChunk(

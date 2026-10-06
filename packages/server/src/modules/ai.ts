@@ -12,7 +12,7 @@ import {
   refreshProfiles,
   defaultsFor,
 } from "../services/llm.js";
-import type { LLMProfile, LLMConfig, LLMProvider } from "../services/llm.js";
+import type { LLMProfile, LLMConfig, LLMProvider, ThinkingMode } from "../services/llm.js";
 import { isNoRewriteField } from "../services/resume-edit.js";
 import type { PrismaClient } from "@prisma/client";
 
@@ -236,6 +236,13 @@ rewrite 是可选字段，只在"可以从现有内容推理出改写结果"时�
 - **禁止把整段 section 名（works/projects/educations/skills/basic，不带下标）当作 field**，也禁止给这类整段字段配 rewrite。整段是数组/对象，前端无法用一段纯文本覆盖；能重写的是段内的具体字符串字段。
 - 若要改写某条经历的描述，field 必须是 works[0].description 这种带下标的路径，rewrite 才是那条描述的新文本。
 - 数组或对象本身的增删（如「新增一段经历」）应写成 problem + suggestion，不给 rewrite、也不把整段名当 field。
+
+**文案用词规则（非常重要）**：
+所有面向用户阅读的文字（summary 的 overall/strengths/weaknesses/priority，以及每条问题的 problem/suggestion/rewrite）**一律用中文**。
+提到字段时必须用中文名，禁止出现英文键名或 JSON 路径：
+- ✅ 所在地、职位、求职意向、公司名称、学校、项目名称、个人简介、描述、开始时间、结束时间
+- ❌ location、role、title、company、school、name、summary、works[0].description、basic.title
+英文键名只允许出现在结构化字段 field 里（field 必须是 JSON 路径，如 basic.title、works[0].description）。
 
 评分标准：
 - 0-40 分：明显不足
@@ -595,6 +602,11 @@ function maskApiKey(key: string): string {
   return `${key.slice(0, 4)}***${key.slice(-4)}`;
 }
 
+/** 思考开关取值归一：只接受 on/off，其余（含 undefined 与旧数据）一律回落 follow */
+function normalizeThinkingMode(v: unknown): ThinkingMode {
+  return v === "on" || v === "off" ? v : "follow";
+}
+
 /** 从数据库读取模型配置并刷新 llm 模块内存快照（全局共享，无 userId） */
 async function syncProfiles(prisma: PrismaClient) {
   // 首次启动且尚无任何模型记录时，把 .env/默认值种入一条默认模型并置为激活，
@@ -611,6 +623,7 @@ async function syncProfiles(prisma: PrismaClient) {
         model: seed.model,
         maxContext: seed.maxContext,
         maxOutput: seed.maxOutput,
+        thinkingMode: normalizeThinkingMode(seed.thinkingMode),
         active: true,
       },
     });
@@ -625,6 +638,7 @@ async function syncProfiles(prisma: PrismaClient) {
     model: r.model,
     maxContext: r.maxContext,
     maxOutput: r.maxOutput,
+    thinkingMode: normalizeThinkingMode(r.thinkingMode),
   }));
   refreshProfiles(profiles, rows.find((r) => r.active)?.id ?? null);
 }
@@ -639,6 +653,7 @@ function buildConfigPayload(profiles: LLMProfile[], activeId: string | null, cfg
       model: p.model,
       maxContext: p.maxContext,
       maxOutput: p.maxOutput,
+      thinkingMode: normalizeThinkingMode(p.thinkingMode),
       apiKeyMasked: maskApiKey(p.apiKey),
       active: p.id === activeId,
     })),
@@ -741,6 +756,7 @@ export async function aiModule(app: FastifyInstance) {
             model: body.model?.trim() || def.model,
             maxContext: body.maxContext ?? def.maxContext,
             maxOutput: body.maxOutput ?? def.maxOutput,
+            thinkingMode: normalizeThinkingMode(body.thinkingMode),
             active: count === 0, // 第一条自动激活
           },
         });
@@ -762,6 +778,7 @@ export async function aiModule(app: FastifyInstance) {
             model: body.model?.trim() || (body.model !== undefined ? def.model : t.model),
             maxContext: body.maxContext !== undefined ? body.maxContext : t.maxContext,
             maxOutput: body.maxOutput !== undefined ? body.maxOutput : t.maxOutput,
+            thinkingMode: body.thinkingMode !== undefined ? normalizeThinkingMode(body.thinkingMode) : t.thinkingMode,
           },
         });
         break;

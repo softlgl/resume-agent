@@ -100,6 +100,13 @@ public static class Prompts
         - 若要改写某条经历的描述，field 必须是 works[0].description 这种带下标的路径，rewrite 才是那条描述的新文本。
         - 数组或对象本身的增删（如「新增一段经历」）应写成 problem + suggestion，不给 rewrite、也不把整段名当 field。
 
+        **文案用词规则（非常重要）**：
+        所有面向用户阅读的文字（summary 的 overall/strengths/weaknesses/priority，以及每条问题的 problem/suggestion/rewrite）**一律用中文**。
+        提到字段时必须用中文名，禁止出现英文键名或 JSON 路径：
+        - ✅ 所在地、职位、求职意向、公司名称、学校、项目名称、个人简介、描述、开始时间、结束时间
+        - ❌ location、role、title、company、school、name、summary、works[0].description、basic.title
+        英文键名只允许出现在结构化字段 field 里（field 必须是 JSON 路径，如 basic.title、works[0].description）。
+
         评分标准：
         - 0-40 分：明显不足
         - 40-70 分：基本合格但有明显短板

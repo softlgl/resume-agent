@@ -1,11 +1,13 @@
-// 原始 OpenAI 兼容流式客户端（对齐 llm.ts 的 chatStream SSE 解析）
+// 原始 OpenAI 兼容 /chat/completions 客户端（对齐 llm.ts 的 chat / chatStream 线协议）
 //
-// 为什么需要它：OpenAI 官方 .NET SDK 在模型绑定阶段会丢弃非标准字段——
-// 第三方 OpenAI 兼容端点（dashscope/豆包/DeepSeek 等）流式 delta 里的
-// reasoning_content（思考过程）拿不到（TextReasoningContent 与
-// AdditionalProperties 兜底均无效，数据在 SDK 反序列化时已丢失）。
-// 实测 dashscope qwen3.8-flash 原始返回确实带 reasoning_content 逐字 delta。
-// 因此除 OpenAI 官方协议外，其余 provider 的流式调用统一走本实现。
+// 为什么所有 provider（含 openai 官方）都走这里，而不用 MEAI / OpenAI 官方 SDK：
+// 1) OpenAI .NET SDK 在模型绑定阶段会丢弃非标准字段——第三方 OpenAI 兼容端点
+//    （dashscope/豆包/DeepSeek 等）流式 delta 里的 reasoning_content（思考过程）拿不到
+//    （TextReasoningContent 与 AdditionalProperties 兜底均无效，数据在 SDK 反序列化时已丢失）。
+//    实测 dashscope qwen3.8-flash 原始返回确实带 reasoning_content 逐字 delta。
+// 2) MEAI 的 ChatOptions.AdditionalProperties 只是给客户端实现读取的状态包，并不会被
+//    并入线上请求体——思考开关（enable_thinking / thinking / reasoning_effort 等）会被静默吞掉。
+//    实测 openai provider 设 on/off 后请求体里没有 reasoning_effort，故统一改为自建请求体。
 
 using System.Net.Http.Headers;
 using System.Text;
@@ -18,44 +20,69 @@ public static class RawOpenAiStream
 {
     private static readonly HttpClient Http = new() { Timeout = TimeSpan.FromMinutes(5) };
 
-    /// <summary>流式调用 OpenAI 兼容 /chat/completions，返回最终 content 全文；失败返回 null</summary>
-    public static async Task<string?> StreamAsync(
-        LlmConfig cfg, IReadOnlyList<ChatMessageItem> items, ChatOptionsEx opts,
-        bool useJsonObjectFormat, Func<string, Task>? onReasoning, Func<string, Task>? onContent,
-        ILogger logger, CancellationToken ct)
+    /// <summary>发送请求；失败（网络异常或非 2xx）返回 null 并记录日志</summary>
+    private static async Task<HttpResponseMessage?> SendAsync(
+        LlmConfig cfg, OpenAiChatRequest body, ILogger logger, CancellationToken ct)
     {
-        var body = new OpenAiChatRequest
-        {
-            Model = cfg.Model,
-            Messages = items.Select(m => new OpenAiMessage(m.Role, m.Content)).ToList(),
-            Temperature = opts.Temperature ?? 0.3,
-            // 以 profile.maxOutput 作为真实上限收敛（对齐 TS）
-            MaxTokens = Math.Min(opts.MaxTokens ?? 6000, cfg.MaxOutput),
-            Stream = true,
-            // 第三方兼容端点只支持 json_object（json_schema 会 400，对齐 TS）
-            ResponseFormat = useJsonObjectFormat ? new OpenAiResponseFormat("json_object") : null,
-        };
-
         using var req = new HttpRequestMessage(HttpMethod.Post, cfg.BaseUrl.TrimEnd('/') + "/chat/completions");
         req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", cfg.ApiKey);
         req.Content = new StringContent(JsonSerializer.Serialize(body), Encoding.UTF8, "application/json");
 
-        HttpResponseMessage resp;
         try
         {
-            resp = await Http.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, ct);
+            var resp = await Http.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, ct);
+            if (resp.IsSuccessStatusCode) return resp;
+            var txt = await resp.Content.ReadAsStringAsync(ct);
+            logger.LogError("[LLM] {Provider} 请求失败 {Status}: {Body}", cfg.Provider, (int)resp.StatusCode, txt);
+            resp.Dispose();
+            return null;
         }
         catch (Exception ex)
         {
-            logger.LogError(ex, "[LLM] {Provider} 流式网络异常", cfg.Provider);
+            logger.LogError(ex, "[LLM] {Provider} 网络异常", cfg.Provider);
             return null;
         }
-        if (!resp.IsSuccessStatusCode)
+    }
+
+    /// <summary>非流式调用（对齐 TS 的 chat()）：失败返回 null</summary>
+    public static async Task<ChatResult?> CompleteAsync(
+        LlmConfig cfg, OpenAiChatRequest body, ILogger logger, CancellationToken ct)
+    {
+        using var resp = await SendAsync(cfg, body, logger, ct);
+        if (resp is null) return null;
+
+        var raw = await resp.Content.ReadAsStringAsync(ct);
+        OpenAiCompletionResponse? data;
+        try
         {
-            var txt = await resp.Content.ReadAsStringAsync(ct);
-            logger.LogError("[LLM] {Provider} 流式请求失败 {Status}: {Body}", cfg.Provider, (int)resp.StatusCode, txt);
+            data = JsonSerializer.Deserialize<OpenAiCompletionResponse>(raw);
+        }
+        catch (JsonException)
+        {
+            logger.LogError("[LLM] {Provider} 响应解析失败: {Body}", cfg.Provider, raw);
             return null;
         }
+
+        var msg = data?.Choices is { Count: > 0 } ? data.Choices[0].Message : null;
+        var text = !string.IsNullOrEmpty(msg?.Content) ? msg!.Content!
+            : !string.IsNullOrEmpty(msg?.ReasoningContent) ? msg!.ReasoningContent!
+            : msg?.Reasoning ?? "";
+        return new ChatResult
+        {
+            Text = CleanFences(text),
+            PromptTokens = data?.Usage?.PromptTokens,
+            CompletionTokens = data?.Usage?.CompletionTokens,
+        };
+    }
+
+    /// <summary>流式调用：返回最终 content 全文；失败返回 null</summary>
+    public static async Task<string?> StreamAsync(
+        LlmConfig cfg, OpenAiChatRequest body,
+        Func<string, Task>? onReasoning, Func<string, Task>? onContent,
+        ILogger logger, CancellationToken ct)
+    {
+        using var resp = await SendAsync(cfg, body, logger, ct);
+        if (resp is null) return null;
 
         var accum = new StringBuilder();
         using var stream = await resp.Content.ReadAsStreamAsync(ct);
@@ -90,5 +117,18 @@ public static class RawOpenAiStream
             }
         }
         return accum.ToString().Trim();
+    }
+
+    /// <summary>对齐 TS 的 ``` 围栏清理：模型偶发输出 markdown 代码块包裹的 JSON</summary>
+    private static string CleanFences(string text)
+    {
+        var t = text.Trim();
+        if (t.StartsWith("```"))
+        {
+            var firstNl = t.IndexOf('\n');
+            if (firstNl > 0) t = t[(firstNl + 1)..];
+            if (t.EndsWith("```")) t = t[..^3];
+        }
+        return t.Trim();
     }
 }

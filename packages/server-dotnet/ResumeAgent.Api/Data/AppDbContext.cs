@@ -61,6 +61,7 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
             e.Property(x => x.MaxContext).HasColumnName("maxContext");
             e.Property(x => x.MaxOutput).HasColumnName("maxOutput");
             e.Property(x => x.Active).HasColumnName("active");
+            e.Property(x => x.ThinkingMode).HasColumnName("thinkingMode").HasMaxLength(16);
             e.Property(x => x.CreatedAt).HasColumnName("createdAt").HasColumnType("datetime(3)");
         });
 

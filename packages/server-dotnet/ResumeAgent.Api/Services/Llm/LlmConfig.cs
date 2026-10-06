@@ -15,6 +15,7 @@ public class LlmConfig
     public string Model { get; set; } = "";
     public int MaxContext { get; set; }           // 输入上下文上限（token）
     public int MaxOutput { get; set; }            // 输出上限（token）
+    public string ThinkingMode { get; set; } = "follow"; // 思考开关：follow(跟随模型默认) | on | off
 }
 
 public class LlmProfile : LlmConfig
@@ -78,6 +79,7 @@ public static class LlmDefaults
             Model = string.IsNullOrWhiteSpace(baseCfg.Model) ? def.Model : baseCfg.Model,
             MaxContext = Math.Max(1, baseCfg.MaxContext > 0 ? baseCfg.MaxContext : def.MaxContext),
             MaxOutput = Math.Max(1, baseCfg.MaxOutput > 0 ? baseCfg.MaxOutput : def.MaxOutput),
+            ThinkingMode = LlmThinking.Normalize(baseCfg.ThinkingMode),
         };
         if (!IsLocal(merged.Provider) && string.IsNullOrEmpty(merged.ApiKey)) return null;
         return merged;

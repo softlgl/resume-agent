@@ -3,6 +3,9 @@
 
 export type LLMProvider = "openai" | "deepseek" | "doubao" | "qwen" | "ollama" | "lmstudio" | "vllm";
 
+/** 思考开关：follow = 跟随模型默认（不注入任何参数） */
+export type ThinkingMode = "follow" | "on" | "off";
+
 export interface LLMConfig {
   provider: LLMProvider;
   apiKey: string; // 本地模型可能为空字符串
@@ -10,6 +13,7 @@ export interface LLMConfig {
   model: string;
   maxContext: number; // 输入上下文上限（token）
   maxOutput: number; // 输出上限（token）
+  thinkingMode?: ThinkingMode; // 思考开关，缺省按 follow
 }
 
 // 各家默认 base URL / model / 上下文与输出上限
@@ -41,6 +45,7 @@ export interface LLMProfile {
   model: string;
   maxContext: number;
   maxOutput: number;
+  thinkingMode?: ThinkingMode;
 }
 
 let _profiles: LLMProfile[] = [];
@@ -70,6 +75,8 @@ function mergeAndValidate(base: LLMConfig): LLMConfig | null {
     model: base.model || DEFAULTS[base.provider].model,
     maxContext: Math.max(1, base.maxContext || DEFAULTS[base.provider].maxContext),
     maxOutput: Math.max(1, base.maxOutput || DEFAULTS[base.provider].maxOutput),
+    // 非法取值（含旧数据/手工改库）一律回落 follow
+    thinkingMode: base.thinkingMode === "on" || base.thinkingMode === "off" ? base.thinkingMode : "follow",
   };
   // 云端需要 apiKey（本地模型可空）
   const isLocal = merged.provider === "ollama" || merged.provider === "lmstudio" || merged.provider === "vllm";
@@ -82,6 +89,7 @@ function mergeAndValidate(base: LLMConfig): LLMConfig | null {
  * - openai：支持结构化输出 json_schema。
  * - 其他云端（deepseek/doubao/qwen）：只支持 json_object（deepseek 用 json_schema 会报 400）。
  * - 本地模型：不支持该字段，由调用方走行内 JSON 提示。
+ * 注意：非 openai 的 provider 拿不到 schema，需另用 buildSchemaSystemMessage 把结构注入提示词。
  */
 function buildResponseFormat(provider: LLMProvider, jsonSchema?: Record<string, unknown>) {
   if (!jsonSchema) return undefined;
@@ -89,6 +97,57 @@ function buildResponseFormat(provider: LLMProvider, jsonSchema?: Record<string, 
     return { type: "json_schema", json_schema: { name: "resume_analysis", schema: jsonSchema, strict: true } };
   }
   return { type: "json_object" as const };
+}
+
+/** openai 官方只有推理模型接受 reasoning_effort，gpt-4o 等传了会 400 */
+const OPENAI_REASONING_MODEL = /^(gpt-5|o1|o3|o4)/i;
+
+/**
+ * 按 provider 注入「思考开关」参数（与 .NET 的 LlmThinking.Apply 对齐）：
+ * - follow：不注入任何参数，保持各家默认行为
+ * - on / off：只在该 provider 该参数确认可用时注入，未确认则静默忽略
+ * 各家用的是非标准扩展字段，因此都放在请求体顶层。
+ */
+function applyThinkingMode(body: Record<string, unknown>, cfg: LLMConfig): void {
+  const mode: ThinkingMode = cfg.thinkingMode ?? "follow";
+  if (mode === "follow") return;
+
+  switch (cfg.provider) {
+    case "qwen":
+      body.enable_thinking = mode === "on";
+      break;
+    case "deepseek":
+    case "doubao":
+      body.thinking = { type: mode === "on" ? "enabled" : "disabled" };
+      break;
+    case "vllm":
+      body.chat_template_kwargs = { enable_thinking: mode === "on" };
+      break;
+    case "ollama":
+      body.think = mode === "on";
+      break;
+    case "openai":
+      if (OPENAI_REASONING_MODEL.test(cfg.model)) {
+        body.reasoning_effort = mode === "on" ? "low" : "none";
+      }
+      break;
+    default:
+      break; // lmstudio：无可靠参数，等同跟随默认
+  }
+}
+
+const JSON_ONLY_SYSTEM_PROMPT = "你必须严格输出 JSON，不要加任何其他文字、解释或 markdown 代码块。";
+
+/**
+ * 非 openai provider 无法通过 response_format 传递 json_schema，
+ * 只能把 JSON Schema 以文本形式注入 system 提示词来约束输出结构
+ * （云端再叠加 json_object 保证语法合法，本地模型只能靠本提示）。
+ */
+function buildSchemaSystemMessage(jsonSchema: Record<string, unknown>): ChatMessage {
+  return {
+    role: "system",
+    content: `${JSON_ONLY_SYSTEM_PROMPT}\n必须严格输出符合以下 JSON Schema 的 JSON：\n\`\`\`json\n${JSON.stringify(jsonSchema, null, 2)}\n\`\`\``,
+  };
 }
 
 export function getLLMConfig(): LLMConfig | null {
@@ -184,15 +243,17 @@ export async function chat(
   body.max_tokens = Math.min(opts.maxTokens ?? DEFAULT_MAX_TOKENS, cfg.maxOutput);
 
   if (opts.jsonSchema) {
-    if (!isLocal) {
+    if (cfg.provider === "openai") {
+      // openai 支持 json_schema：结构由 API 参数强约束，无需注入提示词
       body.response_format = buildResponseFormat(cfg.provider, opts.jsonSchema);
     } else {
-      body.messages = [
-        { role: "system", content: "你必须严格输出 JSON，不要加任何其他文字、解释或 markdown 代码块。" },
-        ...messages,
-      ];
+      // 非 openai 拿不到 schema：注入提示词约束结构，云端再叠加 json_object 保证语法合法
+      body.messages = [buildSchemaSystemMessage(opts.jsonSchema), ...messages];
+      if (!isLocal) body.response_format = buildResponseFormat(cfg.provider, opts.jsonSchema);
     }
   }
+
+  applyThinkingMode(body, cfg);
 
   try {
     const res = await fetch(`${cfg.baseUrl.replace(/\/$/, "")}/chat/completions`, {
@@ -260,15 +321,17 @@ export async function chatStream(
   body.stream = true;
 
   if (opts.jsonSchema) {
-    if (!isLocal) {
+    if (cfg.provider === "openai") {
+      // openai 支持 json_schema：结构由 API 参数强约束，无需注入提示词
       body.response_format = buildResponseFormat(cfg.provider, opts.jsonSchema);
     } else {
-      body.messages = [
-        { role: "system", content: "你必须严格输出 JSON，不要加任何其他文字、解释或 markdown 代码块。" },
-        ...messages,
-      ];
+      // 非 openai 拿不到 schema：注入提示词约束结构，云端再叠加 json_object 保证语法合法
+      body.messages = [buildSchemaSystemMessage(opts.jsonSchema), ...messages];
+      if (!isLocal) body.response_format = buildResponseFormat(cfg.provider, opts.jsonSchema);
     }
   }
+
+  applyThinkingMode(body, cfg);
 
   let res: Response;
   try {

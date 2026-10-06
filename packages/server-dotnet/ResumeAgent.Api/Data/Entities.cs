@@ -23,6 +23,7 @@ public class AiModelProfile
     public int MaxContext { get; set; } = 32768;  // 输入上下文上限（token）
     public int MaxOutput { get; set; } = 4096;    // 输出上限（token）
     public bool Active { get; set; }              // 全局同时只有一个激活
+    public string ThinkingMode { get; set; } = "follow"; // 思考开关：follow(跟随模型默认) | on | off
     public DateTime CreatedAt { get; set; }
 }
 

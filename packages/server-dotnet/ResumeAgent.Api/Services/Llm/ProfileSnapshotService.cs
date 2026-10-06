@@ -38,6 +38,7 @@ public class ProfileSnapshotService(
                 Model = seed.Model,
                 MaxContext = seed.MaxContext,
                 MaxOutput = seed.MaxOutput,
+                ThinkingMode = LlmThinking.Normalize(seed.ThinkingMode),
                 Active = true,
                 CreatedAt = DateTime.Now,
             });
@@ -56,6 +57,7 @@ public class ProfileSnapshotService(
                 Model = r.Model,
                 MaxContext = r.MaxContext,
                 MaxOutput = r.MaxOutput,
+                ThinkingMode = LlmThinking.Normalize(r.ThinkingMode),
             }).ToList();
             _activeId = rows.FirstOrDefault(r => r.Active)?.Id;
         }
@@ -111,6 +113,7 @@ public class ProfileSnapshotService(
                 Model = runtimeOverride.Model,
                 MaxContext = runtimeOverride.MaxContext,
                 MaxOutput = runtimeOverride.MaxOutput,
+                ThinkingMode = runtimeOverride.ThinkingMode,
             };
             var cfg = LlmDefaults.MergeAndValidate(merged);
             if (cfg is not null) return cfg;

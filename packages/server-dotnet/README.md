@@ -27,16 +27,17 @@ cd packages/server-dotnet/ResumeAgent.Api && dotnet run
 | `modules/ai.ts` | `Endpoints/AiEndpoints.cs` + `Services/Analysis/` | 硬规则 + LLM 分析、归一化/防编造过滤、缓存、SSE |
 | `modules/import.ts` | `Endpoints/ImportEndpoints.cs` + `Services/Import/` | docx/pdf 抽取、OCR、脱敏、结构化 |
 | `modules/export.ts` | `Endpoints/ExportEndpoints.cs` + `Services/Export/` | DOCX（OpenXml）+ PDF（QuestPDF） |
-| `services/llm.ts` | `Services/Llm/` | Microsoft.Extensions.AI `IChatClient` + provider 策略 |
+| `services/llm.ts` | `Services/Llm/` | `ChatService` + `RawOpenAiStream`（全部 provider 统一自建请求体） + `LlmThinking`（思考开关按 provider 注入非标准参数 `enable_thinking` / `thinking.type` / `think` / `chat_template_kwargs` / `reasoning_effort`） |
 
 ## 与 Node 版的行为差异（有意为之）
 
 1. **PDF 主路径换成 QuestPDF**（不再依赖本机 Word COM），排版基于同一套 `PRINT` 令牌复刻 pdfkit 降级布局：
    - 行距经校准对齐 Word 渲染（`Print.PdfLineRatio = 1.9`，实测 Word 10pt@1.5 倍行距 = 21.5pt/行）；
    - `pageBreakIds` 仅保留契约兼容，实际由 QuestPDF 自然分页（与 Node 版 Word 主路径行为一致——`docx.ts` 也未使用分页断点；硬分页会与预览度量错位造成大面积留白）。
-2. **LLM 层走 M.E.AI 抽象 + 原始 SSE 兼容层分流**：
-   - `openai` provider：M.E.AI `IChatClient`（OpenAI 官方协议）；
-   - 其他 OpenAI 兼容 provider（deepseek/doubao/qwen/vllm/lmstudio/ollama）流式调用走 `RawOpenAiStream`——OpenAI .NET SDK 会在模型绑定阶段丢弃第三方端点 delta 里的 `reasoning_content`（思考过程），原始 SSE 解析才能保留推理流；provider 策略（json_schema / json_object / 行内 JSON 提示）保留在 `ChatService.ResolveFormat`。
+2. **LLM 层统一走自建请求体 `RawOpenAiStream`**：
+   - OpenAI .NET SDK 会在模型绑定阶段丢弃第三方端点 delta 里的 `reasoning_content`（思考过程），也不会把 `ChatOptions.AdditionalProperties` 并入线上请求体——`reasoning_effort` 等非标准参数会被静默吞掉。因此所有 provider（含 `openai`）统一用 `RawOpenAiStream` 自建 `/chat/completions` 请求体，SSE 解析保留完整推理流；
+   - 思考开关 `LlmThinking.Apply` 在请求体构造时按 provider 注入各自字段，与 Node 版 `applyThinkingMode` 逻辑逐行对齐；
+   - provider 策略（`openai` → `response_format=json_schema`，云端 → `json_object`，本地模型 → 无该字段 + schema 注入提示词）保留在 `ChatService.ResolveResponseFormat` 与 `ChatService.BuildSchemaSystemPrompt`。
 3. OCR 仍复用 `packages/server/scripts/ocr.py`（conda + rapidocr），`OcrRunner` 通过 `Process` 调用，行为一致。
 4. DOCX 行内标题（职位 · 公司 + 右侧日期）用 **1 行 2 列嵌套表格**实现（TS 版是 RIGHT tab 制表位）：左侧标题过长时正常折行，日期固定宽度右对齐——tab 方案在标题宽度达到制表位时会把日期推出文字区造成遮挡。
 5. LLM 分析结果的归一化对模型输出的键名多变体做了兼容（分组名 `section/name/sectionName`、大小写、`field` 与 `section` 并存时优先真实字段路径），field 统一小写以匹配前端 camelCase 定位。

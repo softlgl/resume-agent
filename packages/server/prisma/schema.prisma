@@ -25,6 +25,7 @@ model AiModelProfile {
   maxContext Int      @default(32768) // 输入上下文上限（token）
   maxOutput  Int      @default(4096) // 输出上限（token），运行时作为真实 max_tokens 上限
   active     Boolean  @default(false) // 全局同时只有一个激活
+  thinkingMode String @default("follow") // 思考开关：follow(跟随模型默认) | on | off
   createdAt  DateTime @default(now())
 }
 

@@ -1,14 +1,10 @@
-// M.E.AI 聊天服务（对齐 llm.ts 的 chat / chatStream）：
-// - IChatClient 抽象：OpenAI 兼容端点（openai/deepseek/doubao/qwen/vllm/lmstudio/ollama）统一走 OpenAI 连接器
-// - provider 策略：openai 用 json_schema；deepseek/doubao/qwen 用 json_object；本地模型注入行内 JSON 提示
-// - 流式：TextReasoningContent → onReasoning（思考过程逐字），TextContent → onContent + 返回全文
+// 聊天服务（对齐 llm.ts 的 chat / chatStream）：
+// - provider 策略：openai 用 response_format=json_schema；deepseek/doubao/qwen 用 json_object；本地模型无 response_format
+//   非 openai 一律把 JSON Schema 文本注入 system 提示词（它们拿不到 json_schema，只能靠提示约束结构）
+// - 所有 provider 统一走 RawOpenAiStream（自建请求体），原因见该文件头部注释
 // - maxOutput clamp：调用方给的再大也被收敛到 profile.maxOutput
 
-using System.ClientModel;
 using System.Text.Json;
-using Microsoft.Extensions.AI;
-using OpenAI;
-using ResumeAgent.Api.Contracts;
 
 namespace ResumeAgent.Api.Services.Llm;
 
@@ -16,54 +12,50 @@ public class ChatService(ProfileSnapshotService profiles, ILogger<ChatService> l
 {
     private const string JsonOnlySystemPrompt = "你必须严格输出 JSON，不要加任何其他文字、解释或 markdown 代码块。";
 
-    /// <summary>按 provider 构建 IChatClient（OpenAI 兼容协议统一走 OpenAI 连接器）</summary>
-    public IChatClient BuildClient(LlmConfig cfg)
+    /// <summary>该 provider 是否支持通过 response_format 传 json_schema（当前只有 openai 官方）。
+    /// 这是「结构化输出走参数还是走提示词」的分水岭，只在此处判定一次。</summary>
+    private static bool SupportsJsonSchemaParam(LlmProvider provider) => provider == LlmProvider.Openai;
+
+    /// <summary>response_format 策略：openai 走 json_schema；其余云端走 json_object；本地模型无此参数</summary>
+    private static OpenAiResponseFormat? ResolveResponseFormat(LlmProvider provider, string? jsonSchema)
     {
-        var options = new OpenAIClientOptions { Endpoint = new Uri(cfg.BaseUrl.TrimEnd('/')) };
-        var openAi = new OpenAIClient(new ApiKeyCredential(cfg.ApiKey), options);
-        return openAi.GetChatClient(cfg.Model).AsIChatClient();
+        if (string.IsNullOrEmpty(jsonSchema)) return null;
+        if (SupportsJsonSchemaParam(provider))
+            return new OpenAiResponseFormat("json_schema",
+                new OpenAiJsonSchema("resume_analysis", JsonDocument.Parse(jsonSchema).RootElement.Clone(), true));
+        return LlmDefaults.IsLocal(provider) ? null : new OpenAiResponseFormat("json_object"); // json_schema 会 400
     }
 
-    /// <summary>provider 策略：决定 ResponseFormat / 是否注入 JSON-only system 消息</summary>
-    private (ChatResponseFormat? Format, bool PrependJsonOnly) ResolveFormat(LlmProvider provider, string? jsonSchema)
+    /// <summary>把 JSON Schema 文本注入 system 提示词——供拿不到 json_schema 参数的 provider 约束输出结构。
+    /// openai 走 response_format 参数，此处恒返回 null。</summary>
+    private static string? BuildSchemaSystemPrompt(LlmProvider provider, string? jsonSchema)
     {
-        if (string.IsNullOrEmpty(jsonSchema)) return (null, false);
-        if (LlmDefaults.IsLocal(provider)) return (null, true);
-        if (provider == LlmProvider.Openai)
-        {
-            var schema = JsonDocument.Parse(jsonSchema).RootElement.Clone();
-            return (ChatResponseFormat.ForJsonSchema(schema), false);
-        }
-        return (ChatResponseFormat.Json, false); // deepseek/doubao/qwen：json_object（json_schema 会 400）
+        if (string.IsNullOrEmpty(jsonSchema) || SupportsJsonSchemaParam(provider)) return null;
+        return $"{JsonOnlySystemPrompt}\n必须严格输出符合以下 JSON Schema 的 JSON：\n```json\n{jsonSchema}\n```";
     }
 
-    private List<ChatMessage> BuildMessages(IReadOnlyList<ChatMessageItem> items, bool prependJsonOnly)
+    /// <summary>构造 /chat/completions 请求体（对齐 TS 的 chat / chatStream 公共部分）</summary>
+    private static OpenAiChatRequest BuildBody(
+        LlmConfig cfg, IReadOnlyList<ChatMessageItem> items, ChatOptionsEx opts, bool stream)
     {
-        var messages = new List<ChatMessage>();
-        if (prependJsonOnly)
-            messages.Add(new ChatMessage(ChatRole.System, JsonOnlySystemPrompt));
-        foreach (var m in items)
-            messages.Add(new ChatMessage(
-                m.Role switch
-                {
-                    ChatMessageRole.System => ChatRole.System,
-                    ChatMessageRole.Assistant => ChatRole.Assistant,
-                    _ => ChatRole.User,
-                }, m.Content));
-        return messages;
-    }
+        var schemaPrompt = BuildSchemaSystemPrompt(cfg.Provider, opts.JsonSchema);
 
-    private ChatOptions BuildChatOptions(LlmConfig cfg, ChatOptionsEx opts, ChatResponseFormat? format)
-    {
+        var messages = new List<OpenAiMessage>();
+        if (schemaPrompt is not null) messages.Add(new OpenAiMessage("system", schemaPrompt));
+        foreach (var m in items) messages.Add(new OpenAiMessage(m.Role, m.Content));
+
         // 流式 + 推理模型 reasoning 占用 token，给足默认值；再以 profile.maxOutput 收敛避免超过各家硬上限
-        var isLocal = LlmDefaults.IsLocal(cfg.Provider);
-        var defaultMax = isLocal ? 4000 : 2000;
-        return new ChatOptions
+        var defaultMax = stream ? 6000 : (LlmDefaults.IsLocal(cfg.Provider) ? 4000 : 2000);
+
+        return LlmThinking.Apply(new OpenAiChatRequest
         {
-            Temperature = (float)(opts.Temperature ?? 0.3),
-            MaxOutputTokens = Math.Min(opts.MaxTokens ?? defaultMax, cfg.MaxOutput),
-            ResponseFormat = format,
-        };
+            Model = cfg.Model,
+            Messages = messages,
+            Temperature = opts.Temperature ?? 0.3,
+            MaxTokens = Math.Min(opts.MaxTokens ?? defaultMax, cfg.MaxOutput),
+            Stream = stream,
+            ResponseFormat = ResolveResponseFormat(cfg.Provider, opts.JsonSchema),
+        }, cfg);
     }
 
     /// <summary>非流式（对齐 chat()）；失败返回 null</summary>
@@ -74,25 +66,7 @@ public class ChatService(ProfileSnapshotService profiles, ILogger<ChatService> l
         var cfg = profiles.GetConfig(runtimeOverride);
         if (cfg is null) return null;
         opts ??= new ChatOptionsEx();
-        var (format, prepend) = ResolveFormat(cfg.Provider, opts.JsonSchema);
-
-        try
-        {
-            var client = BuildClient(cfg);
-            var response = await client.GetResponseAsync(BuildMessages(items, prepend), BuildChatOptions(cfg, opts, format), ct);
-            var text = response.Text ?? "";
-            return new ChatResult
-            {
-                Text = CleanFences(text),
-                PromptTokens = (int?)response.Usage?.InputTokenCount,
-                CompletionTokens = (int?)response.Usage?.OutputTokenCount,
-            };
-        }
-        catch (Exception ex)
-        {
-            logger.LogError(ex, "[LLM] {Provider} 请求失败", cfg.Provider);
-            return null;
-        }
+        return await RawOpenAiStream.CompleteAsync(cfg, BuildBody(cfg, items, opts, stream: false), logger, ct);
     }
 
     /// <summary>流式（对齐 chatStream）：reasoning delta 实时回调，content delta 累加并回调，返回最终全文；失败返回 null
@@ -105,72 +79,7 @@ public class ChatService(ProfileSnapshotService profiles, ILogger<ChatService> l
         var cfg = profiles.GetConfig(runtimeOverride);
         if (cfg is null) return null;
         opts ??= new ChatOptionsEx();
-        var (format, prepend) = ResolveFormat(cfg.Provider, opts.JsonSchema);
-
-        // 非 OpenAI 官方协议的 provider 走原始 SSE 兼容层：
-        // OpenAI .NET SDK 会丢弃第三方端点 delta 里的 reasoning_content（思考过程），导致推理流为空
-        if (cfg.Provider != LlmProvider.Openai)
-        {
-            IReadOnlyList<ChatMessageItem> rawItems = prepend
-                ? new[] { new ChatMessageItem(ChatMessageRole.System, JsonOnlySystemPrompt) }.Concat(items).ToList()
-                : items;
-            return await RawOpenAiStream.StreamAsync(
-                cfg, rawItems, opts,
-                useJsonObjectFormat: !string.IsNullOrEmpty(opts.JsonSchema) && !LlmDefaults.IsLocal(cfg.Provider),
-                onReasoning, onContent, logger, ct);
-        }
-
-        // 流式 + 推理模型 reasoning 占用 token，给足 maxTokens 避免 JSON 被截断（对齐 TS 的 6000 默认值）
-        var chatOpts = BuildChatOptions(cfg, opts, format);
-        if (opts.MaxTokens is null) chatOpts.MaxOutputTokens = Math.Min(6000, cfg.MaxOutput);
-
-        var accum = new System.Text.StringBuilder();
-        try
-        {
-            var client = BuildClient(cfg);
-            await foreach (var update in client.GetStreamingResponseAsync(BuildMessages(items, prepend), chatOpts, ct))
-            {
-                foreach (var part in update.Contents)
-                {
-                    switch (part)
-                    {
-                        case TextReasoningContent rc when !string.IsNullOrEmpty(rc.Text):
-                            if (onReasoning is not null) await onReasoning(rc.Text);
-                            break;
-                        case TextContent tc when !string.IsNullOrEmpty(tc.Text):
-                            accum.Append(tc.Text);
-                            if (onContent is not null) await onContent(tc.Text);
-                            break;
-                        case UsageContent:
-                            break;
-                    }
-                }
-                // 兜底：DeepSeek 等非标准字段可能挂在 AdditionalProperties（reasoning_content / reasoning）
-                if (update.AdditionalProperties is not null)
-                    foreach (var key in new[] { "reasoning_content", "reasoning" })
-                        if (update.AdditionalProperties.TryGetValue(key, out var v) && v is string s && s.Length > 0 && onReasoning is not null)
-                            await onReasoning(s);
-            }
-        }
-        catch (OperationCanceledException) { throw; }
-        catch (Exception ex)
-        {
-            logger.LogError(ex, "[LLM] {Provider} 流式请求失败", cfg.Provider);
-            return null;
-        }
-        return accum.ToString().Trim();
-    }
-
-    /// <summary>对齐 TS 的 ``` 围栏清理：模型偶发输出 markdown 代码块包裹的 JSON</summary>
-    private static string CleanFences(string text)
-    {
-        var t = text.Trim();
-        if (t.StartsWith("```"))
-        {
-            var firstNl = t.IndexOf('\n');
-            if (firstNl > 0) t = t[(firstNl + 1)..];
-            if (t.EndsWith("```")) t = t[..^3];
-        }
-        return t.Trim();
+        return await RawOpenAiStream.StreamAsync(
+            cfg, BuildBody(cfg, items, opts, stream: true), onReasoning, onContent, logger, ct);
     }
 }

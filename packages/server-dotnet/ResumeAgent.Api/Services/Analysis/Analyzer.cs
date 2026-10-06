@@ -32,7 +32,9 @@ public class Analyzer(ChatService chat, ProfileSnapshotService profiles, ILogger
         if (!profiles.IsAvailable(runtimeOverride)) return null;
 
         var reasoningTxt = "";
-        var node = JsonNode.Parse(JsonSerializer.Serialize(content));
+        // 必须用 camelCase：默认选项会输出 PascalCase（Title/Location），
+        // 模型会照着英文键名推理并写进 problem/summary，前端也认不出这些路径
+        var node = JsonNode.Parse(JsonSerializer.Serialize(content, JsonDefaults.Options));
         if (node is null) return null;
         var sanitized = Prompts.SanitizeContent(node);
 
@@ -247,7 +249,8 @@ public class Analyzer(ChatService chat, ProfileSnapshotService profiles, ILogger
     public async Task<MatchResult?> JdMatchAsync(ResumeContent content, string jd, LlmConfig? runtimeOverride = null, CancellationToken ct = default)
     {
         if (!profiles.IsAvailable(runtimeOverride)) return null;
-        var node = JsonNode.Parse(JsonSerializer.Serialize(content));
+        // 同上：必须 camelCase，默认选项的 PascalCase 会让模型按 Title/Location 这类英文键名作答
+        var node = JsonNode.Parse(JsonSerializer.Serialize(content, JsonDefaults.Options));
         if (node is null) return null;
         var sanitized = Prompts.SanitizeContent(node);
         var result = await chat.ChatAsync(

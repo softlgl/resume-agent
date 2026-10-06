@@ -48,7 +48,8 @@ export function extractSensitive(text: string): SensitiveFields {
 // 把抽出的敏感值在文本中替换为占位，返回脱敏后的文本（仅替换真正命中的字段）
 export function redactText(text: string, found: Partial<SensitiveFields>): string {
   const values = new Set<string>();
-  (Object.keys(found) as (keyof SensitiveFields)[]).forEach((k) => {
+  // 只取要脱敏的字符串字段：locationReliable 是布尔标记，遍历全部键会对它调 trim 而抛错
+  (["name", "phone", "email", "location"] as const).forEach((k) => {
     const v = (found[k] || "").trim();
     if (v) values.add(v);
   });

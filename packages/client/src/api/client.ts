@@ -15,6 +15,7 @@ export interface AIProfile {
   model: string;
   maxContext: number;
   maxOutput: number;
+  thinkingMode: string;
   apiKeyMasked: string;
   active: boolean;
 }
@@ -123,9 +124,9 @@ export const api = {
   // LLM 配置（多模型 profiles + 当前激活）
   aiHealth: () => request<{ llmAvailable: boolean; provider: string | null; config?: any }>("/ai/health"),
   aiGetConfig: () => request<AIConfigResponse>("/ai/config"),
-  aiAddProfile: (p: { name?: string; provider: string; baseUrl?: string; model?: string; apiKey?: string; maxContext?: number; maxOutput?: number }) =>
+  aiAddProfile: (p: { name?: string; provider: string; baseUrl?: string; model?: string; apiKey?: string; maxContext?: number; maxOutput?: number; thinkingMode?: string }) =>
     request<AIConfigResponse>("/ai/config", { method: "POST", body: JSON.stringify({ action: "add", ...p }) }),
-  aiUpdateProfile: (id: string, p: { name?: string; provider?: string; baseUrl?: string; model?: string; apiKey?: string; maxContext?: number; maxOutput?: number }) =>
+  aiUpdateProfile: (id: string, p: { name?: string; provider?: string; baseUrl?: string; model?: string; apiKey?: string; maxContext?: number; maxOutput?: number; thinkingMode?: string }) =>
     request<AIConfigResponse>("/ai/config", { method: "POST", body: JSON.stringify({ action: "update", id, ...p }) }),
   aiRemoveProfile: (id: string) =>
     request<AIConfigResponse>("/ai/config", { method: "POST", body: JSON.stringify({ action: "remove", id }) }),

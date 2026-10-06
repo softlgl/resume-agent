@@ -32,6 +32,7 @@ public static class AiEndpoints
         p.Id, p.Name,
         provider = LlmDefaults.ProviderName(p.Provider),
         p.BaseUrl, p.Model, p.MaxContext, p.MaxOutput,
+        thinkingMode = LlmThinking.Normalize(p.ThinkingMode),
         apiKeyMasked = MaskApiKey(p.ApiKey),
         active = p.Id == activeId,
     };
@@ -145,6 +146,7 @@ public static class AiEndpoints
                         Model = model is { Length: > 0 } ? model : def.Model,
                         MaxContext = body.MaxContext ?? def.MaxContext,
                         MaxOutput = body.MaxOutput ?? def.MaxOutput,
+                        ThinkingMode = LlmThinking.Normalize(body.ThinkingMode),
                         Active = count == 0, // 第一条自动激活
                         CreatedAt = DateTime.Now,
                     });
@@ -165,6 +167,7 @@ public static class AiEndpoints
                     t.Model = model is { Length: > 0 } ? model : t.Model;
                     if (body.MaxContext is not null) t.MaxContext = body.MaxContext.Value;
                     if (body.MaxOutput is not null) t.MaxOutput = body.MaxOutput.Value;
+                    if (body.ThinkingMode is not null) t.ThinkingMode = LlmThinking.Normalize(body.ThinkingMode);
                     break;
                 }
                 case "remove":

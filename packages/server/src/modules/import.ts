@@ -42,71 +42,79 @@ export async function importModule(app: FastifyInstance) {
 
     send("status", { message: "文本已提取，正在识别…" });
 
-    // 敏感信息本地抽取并在发往 LLM 前替换为占位（避免姓名/电话/邮箱/地址外发）；AI 完成后回填真值
-    const sensitive = extractSensitive(extract.text);
-    // 所在地无明确标签时启发式不可靠：不本地回填也不脱敏，交由 LLM 推断，避免错值覆盖
-    if (!sensitive.locationReliable) sensitive.location = "";
-    const sendText = redactText(extract.text, sensitive);
-
-    let content = null;
-    let note: string | undefined;
-    let importReasoning = "";
-    let importOutput = "";
+    // hijack 之后 Fastify 不再接管错误，任何抛出都会让连接悬空、前端永久等待。
+    // 因此后续全部逻辑必须包在 try 里：出错也要推一个 error 事件并关掉流。
     try {
-      content = await structurizeText(
-        sendText,
-        (d) => { importReasoning += d; send("reasoning", { delta: d }); },
-        (d) => { importOutput += d; send("content", { delta: d }); }
-      );
-    } catch {
-      content = null;
-    }
-    if (!content) {
-      note = "未配置 LLM 或自动识别失败，文本已提取，请手动填写。";
-    } else {
-      // 归一：项目所属公司尽量匹配到工作经历里的公司名（模糊/包含），不中则留空
-      const companies = content.works.map((w) => w.company.trim()).filter(Boolean);
-      const fit = (candidate: string): string => {
-        const t = candidate.trim();
-        if (!t || companies.length === 0) return "";
-        const lower = t.toLowerCase();
-        const hit = companies.find((c) => c.toLowerCase() === lower);
-        if (hit) return hit;
-        const contain = companies.find((c) => c.toLowerCase().includes(lower) || lower.includes(c.toLowerCase()));
-        return contain || "";
-      };
-      content.projects = content.projects.map((p) => ({ ...p, company: fit(p.company) }));
-      // 敏感信息回填：用本地抽取的真实值覆盖 basic（地址→location；未抽到的字段保持 AI 结果）
-      restoreSensitive(content, sensitive);
-    }
+      // 敏感信息本地抽取并在发往 LLM 前替换为占位（避免姓名/电话/邮箱/地址外发）；AI 完成后回填真值
+      const sensitive = extractSensitive(extract.text);
+      // 所在地无明确标签时启发式不可靠：不本地回填也不脱敏，交由 LLM 推断，避免错值覆盖
+      if (!sensitive.locationReliable) sensitive.location = "";
+      const sendText = redactText(extract.text, sensitive);
 
-    // 记录一次【导入】调用日志（按 userId，无简历 id）
-    try {
-      const cfg = getDefaultConfig();
-      await app.prisma.llmCallLog.create({
-        data: {
-          userId: request.userId,
-          kind: "import",
-          provider: cfg.provider,
-          model: cfg.model,
-          ok: content !== null,
-          reasoning: importReasoning || null,
-          output: content ? JSON.stringify(content) : importOutput || null,
-        },
+      let content = null;
+      let note: string | undefined;
+      let importReasoning = "";
+      let importOutput = "";
+      try {
+        content = await structurizeText(
+          sendText,
+          (d) => { importReasoning += d; send("reasoning", { delta: d }); },
+          (d) => { importOutput += d; send("content", { delta: d }); }
+        );
+      } catch {
+        content = null;
+      }
+      if (!content) {
+        note = "未配置 LLM 或自动识别失败，文本已提取，请手动填写。";
+      } else {
+        // 归一：项目所属公司尽量匹配到工作经历里的公司名（模糊/包含），不中则留空
+        const companies = content.works.map((w) => w.company.trim()).filter(Boolean);
+        const fit = (candidate: string): string => {
+          const t = candidate.trim();
+          if (!t || companies.length === 0) return "";
+          const lower = t.toLowerCase();
+          const hit = companies.find((c) => c.toLowerCase() === lower);
+          if (hit) return hit;
+          const contain = companies.find((c) => c.toLowerCase().includes(lower) || lower.includes(c.toLowerCase()));
+          return contain || "";
+        };
+        content.projects = content.projects.map((p) => ({ ...p, company: fit(p.company) }));
+        // 敏感信息回填：用本地抽取的真实值覆盖 basic（地址→location；未抽到的字段保持 AI 结果）
+        restoreSensitive(content, sensitive);
+      }
+
+      // 记录一次【导入】调用日志（按 userId，无简历 id）
+      try {
+        const cfg = getDefaultConfig();
+        await app.prisma.llmCallLog.create({
+          data: {
+            userId: request.userId,
+            kind: "import",
+            provider: cfg.provider,
+            model: cfg.model,
+            ok: content !== null,
+            reasoning: importReasoning || null,
+            output: content ? JSON.stringify(content) : importOutput || null,
+          },
+        });
+      } catch (err) {
+        console.error("[IMPORT] 记录调用日志失败:", err);
+      }
+
+      send("result", {
+        fileName,
+        sourceText: extract.text,
+        ocrUsed: extract.sourceType === "ocr",
+        content,
+        note,
       });
-    } catch (err) {
-      console.error("[IMPORT] 记录调用日志失败:", err);
+      send("done", { ok: true });
+    } catch (err: any) {
+      console.error("[IMPORT] 解析失败:", err);
+      send("error", { message: err?.message || "识别失败，请重试" });
+    } finally {
+      raw.end();
     }
-
-    send("result", {
-      fileName,
-      sourceText: extract.text,
-      ocrUsed: extract.sourceType === "ocr",
-      content,
-      note,
-    });
-    send("done", { ok: true });
-    raw.end();
     return reply;
   });
 }
