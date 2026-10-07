@@ -15,11 +15,11 @@ import {
   Target,
   X,
 } from "lucide-react";
-import { api } from "../api/client";
+import { api } from "../../api/client";
 import EditCard, { type ApplyResult } from "./EditCard";
 import ChatSessionPicker from "./ChatSessionPicker";
-import { MarkdownLite } from "../utils/markdownLite";
-import { fieldToLabel } from "../utils/fieldLabel";
+import { MarkdownLite } from "../../utils/markdownLite";
+import { fieldToLabel } from "../../utils/fieldLabel";
 import type {
   AiRevisionRecord,
   AuditTask,

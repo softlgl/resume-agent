@@ -9,7 +9,7 @@ import {
   RotateCcw,
   Sparkles,
 } from "lucide-react";
-import { wordDiff } from "../utils/diff";
+import { wordDiff } from "../../utils/diff";
 import type { EditSection, ResumeEdit } from "@resume-agent/shared";
 
 // 应用结果：供 Editor 记账（before/after）与调用方提示

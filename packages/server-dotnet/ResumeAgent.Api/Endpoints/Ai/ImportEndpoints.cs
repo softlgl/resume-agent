@@ -6,10 +6,11 @@ using ResumeAgent.Api.Auth;
 using ResumeAgent.Api.Common;
 using ResumeAgent.Api.Contracts;
 using ResumeAgent.Api.Data;
+using ResumeAgent.Api.Services.Ai;
 using ResumeAgent.Api.Services.Import;
 using ResumeAgent.Api.Services.Llm;
 
-namespace ResumeAgent.Api.Endpoints;
+namespace ResumeAgent.Api.Endpoints.Ai;
 
 public static class ImportEndpoints
 {
@@ -94,31 +95,13 @@ public static class ImportEndpoints
                 RedactService.RestoreSensitive(content, sensitive);
             }
 
-            // 记录一次【导入】调用日志（按 userId，无简历 id）
-            try
-            {
-                var cfg = snapshot.GetDefaultConfig();
-                db.LlmCallLogs.Add(new LlmCallLog
-                {
-                    Id = Cuid.New(),
-                    UserId = userId,
-                    Kind = LlmCallKind.Import,
-                    ResumeId = null,
-                    Provider = LlmDefaults.ProviderName(cfg.Provider),
-                    Model = cfg.Model,
-                    Ok = content is not null,
-                    Reasoning = importReasoning.Length > 0 ? importReasoning : null,
-                    Output = content is not null
-                        ? System.Text.Json.JsonSerializer.Serialize(content, SseWriter.JsonOptions)
-                        : importOutput.Length > 0 ? importOutput : null,
-                    CreatedAt = DateTime.Now,
-                });
-                await db.SaveChangesAsync();
-            }
-            catch (Exception)
-            {
-                Console.Error.WriteLine("[IMPORT] 记录调用日志失败");
-            }
+            // 记录一次【导入】调用日志（按 userId，无简历 id）；ok 按「是否结构化成功」写入
+            await CallLog.RecordCallAsync(db, snapshot, userId, LlmCallKind.Import, null,
+                ok: content is not null,
+                reasoning: importReasoning.Length > 0 ? importReasoning : null,
+                output: content is not null
+                    ? System.Text.Json.JsonSerializer.Serialize(content, SseWriter.JsonOptions)
+                    : importOutput.Length > 0 ? importOutput : null);
 
             await sse.SendAsync("result", new
             {

@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import { Check, ChevronLeft } from "lucide-react";
-import { api, type AIProfile } from "../api/client";
+import { api, type AIProfile } from "../../api/client";
 
 // 与后端 DEFAULTS 对齐的各家默认上下/输出上限（新增模型时按 provider 预填）
 const PROVIDER_LIMITS: Record<string, { maxContext: number; maxOutput: number }> = {

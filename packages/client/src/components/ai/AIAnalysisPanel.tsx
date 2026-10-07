@@ -1,11 +1,11 @@
 import { useState, useEffect, useCallback } from "react";
 import { Sparkles, X, AlertTriangle, AlertCircle, Lightbulb, TrendingUp, Brain, RefreshCw, Settings, Check, CornerDownRight, Braces, MessagesSquare, ScanSearch, Wand2, RotateCcw } from "lucide-react";
-import { api } from "../api/client";
+import { api } from "../../api/client";
 import ModelManager from "./ModelManager";
 import ChatPanel from "./ChatPanel";
-import RevisionHistory from "./RevisionHistory";
+import RevisionHistory from "../RevisionHistory";
 import type { ApplyResult } from "./EditCard";
-import { fieldToLabel } from "../utils/fieldLabel";
+import { fieldToLabel } from "../../utils/fieldLabel";
 import type { AiRevisionRecord, ResumeEdit } from "@resume-agent/shared";
 
 // 前端 Issue 类型（和后端对齐）

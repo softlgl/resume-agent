@@ -1,75 +1,15 @@
-// Prompt 与脱敏（对齐 modules/ai.ts：ANALYSIS_SCHEMA / MATCH_SCHEMA / buildSystemPrompt / sanitizeContent / buildUserPrompt）
+// 提示词与脱敏（对齐 Node core/prompts.ts）
+// - sanitizeContent：发送给 LLM 前的隐私脱敏，分析与对话共用同一份实现
+// - BuildSystemPrompt / BuildUserPrompt：分析链路的提示词
+// - SanitizeContent：分析与对话共用（对话侧 BuildChatUserContent 复用同一份逻辑）
 
 using System.Text.Json.Nodes;
 using ResumeAgent.Api.Contracts;
 
-namespace ResumeAgent.Api.Services.Analysis;
+namespace ResumeAgent.Api.Services.Ai;
 
 public static class Prompts
 {
-    // 期望 LLM 返回的 JSON Schema（用于强制结构化输出）
-    public const string AnalysisSchema = """
-        {
-          "type": "object",
-          "properties": {
-            "atsScore": { "type": "integer", "minimum": 0, "maximum": 100 },
-            "qualityScore": { "type": "integer", "minimum": 0, "maximum": 100 },
-            "sections": {
-              "type": "object",
-              "properties": {
-                "basic": { "type": "array", "items": { "type": "object", "properties": {
-                  "severity": { "type": "string", "enum": ["error", "warning", "tip"] },
-                  "field": { "type": "string" },
-                  "problem": { "type": "string" },
-                  "suggestion": { "type": "string" },
-                  "rewrite": { "type": "string" } },
-                  "required": ["severity", "field", "problem"] } },
-                "works": { "type": "array" },
-                "projects": { "type": "array" },
-                "skills": { "type": "array" }
-              },
-              "required": ["basic", "works", "projects", "skills"]
-            },
-            "abilityProfile": {
-              "type": "object",
-              "properties": {
-                "tech": { "type": "integer", "minimum": 0, "maximum": 100 },
-                "project": { "type": "integer", "minimum": 0, "maximum": 100 },
-                "stability": { "type": "integer", "minimum": 0, "maximum": 100 },
-                "communication": { "type": "integer", "minimum": 0, "maximum": 100 },
-                "education": { "type": "integer", "minimum": 0, "maximum": 100 }
-              },
-              "required": ["tech", "project", "stability", "communication", "education"]
-            },
-            "summary": {
-              "type": "object",
-              "properties": {
-                "overall": { "type": "string" },
-                "strengths": { "type": "array", "items": { "type": "string" } },
-                "weaknesses": { "type": "array", "items": { "type": "string" } },
-                "priority": { "type": "string" }
-              },
-              "required": ["overall", "strengths", "weaknesses", "priority"]
-            }
-          },
-          "required": ["atsScore", "qualityScore", "sections", "abilityProfile"]
-        }
-        """;
-
-    public const string MatchSchema = """
-        {
-          "type": "object",
-          "properties": {
-            "score": { "type": "integer", "minimum": 0, "maximum": 100 },
-            "mustHaves": { "type": "array", "items": { "type": "object", "properties": {
-              "skill": { "type": "string" }, "matched": { "type": "boolean" } },
-              "required": ["skill", "matched"] } },
-            "gaps": { "type": "array", "items": { "type": "string" } }
-          },
-          "required": ["score", "mustHaves", "gaps"]
-        }
-        """;
-
     public static string BuildSystemPrompt() => """
         你是一名专业的招聘经理和简历优化专家。请分析候选人的简历，从以下维度给出结构化的评估：
 

@@ -24,10 +24,12 @@ cd packages/server-dotnet/ResumeAgent.Api && dotnet run
 |---|---|---|
 | `modules/auth.ts` | `Endpoints/AuthEndpoints.cs` | JWT（JwtBearer）+ BCrypt |
 | `modules/resume.ts` | `Endpoints/ResumeEndpoints.cs` | CRUD，删除时事务清理调用日志 |
-| `modules/ai.ts` | `Endpoints/AiEndpoints.cs` + `Services/Analysis/` | 硬规则 + LLM 分析、归一化/防编造过滤、缓存、SSE |
-| `modules/import.ts` | `Endpoints/ImportEndpoints.cs` + `Services/Import/` | docx/pdf 抽取、OCR、脱敏、结构化 |
+| `modules/ai/analyze.ts` | `Endpoints/Ai/AiAnalyzeEndpoints.cs` + `Services/Analysis/` | 硬规则 + LLM 分析、归一化/防编造过滤、缓存、SSE |
+| `modules/ai/config.ts` | `Endpoints/Ai/AiConfigEndpoints.cs` | 多模型 Profile 的增删改选与内存快照 |
+| `modules/ai/chat.ts` | `Endpoints/Ai/AiChatEndpoints.cs` | AI 对话、修改建议校验与修改账本 |
+| `modules/ai/import.ts` | `Endpoints/Ai/ImportEndpoints.cs` + `Services/Import/` | docx/pdf 抽取、OCR、脱敏、结构化 |
 | `modules/export.ts` | `Endpoints/ExportEndpoints.cs` + `Services/Export/` | DOCX（OpenXml）+ PDF（QuestPDF） |
-| `services/llm.ts` | `Services/Llm/` | `ChatService` + `RawOpenAiStream`（全部 provider 统一自建请求体） + `LlmThinking`（思考开关按 provider 注入非标准参数 `enable_thinking` / `thinking.type` / `think` / `chat_template_kwargs` / `reasoning_effort`） |
+| `modules/ai/core/*` | `Services/Llm/` + `Services/Ai/` | 同构共享层：`llm`↔`Services/Llm/`、`prompts`/`schemas`/`history`/`call-log`↔`Services/Ai/`（`ChatService` + `RawOpenAiStream` 统一自建请求体，`LlmThinking` 按 provider 注入非标准参数 `enable_thinking` / `thinking.type` / `think` / `chat_template_kwargs` / `reasoning_effort`） |
 
 ## 与 Node 版的行为差异（有意为之）
 

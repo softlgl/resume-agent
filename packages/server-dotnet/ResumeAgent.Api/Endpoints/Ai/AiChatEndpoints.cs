@@ -15,11 +15,11 @@ using ResumeAgent.Api.Auth;
 using ResumeAgent.Api.Common;
 using ResumeAgent.Api.Contracts;
 using ResumeAgent.Api.Data;
-using ResumeAgent.Api.Services.Analysis;
+using ResumeAgent.Api.Services.Ai;
 using ResumeAgent.Api.Services.Edit;
 using ResumeAgent.Api.Services.Llm;
 
-namespace ResumeAgent.Api.Endpoints;
+namespace ResumeAgent.Api.Endpoints.Ai;
 
 public static class AiChatEndpoints
 {
@@ -101,13 +101,6 @@ public static class AiChatEndpoints
         "- 面向用户阅读的文字（reply、asks 以及 edits 的 reason/risks）提到简历字段时一律用中文名（如「所在地」「职位」「求职意向」「公司名称」），禁止出现 location/role/title 这类英文键名或 JSON 路径。\n" +
         "- 回复用中文，语气专业、简洁。";
 
-    // -----------------------------------------------------------------------
-    // 上下文裁剪预算
-    // -----------------------------------------------------------------------
-
-    private const int HistoryMaxCount = 12;      // 最多带最近 12 条历史
-    private const int HistoryMsgMaxChars = 2000; // 单条历史消息字符上限
-
     /// <summary>JSON 输出用：不转义中文（对齐 JS JSON.stringify 的原样输出，避免 prompt 体积膨胀）</summary>
     private static readonly JsonSerializerOptions PrettyJsonOptions = new()
     {
@@ -134,31 +127,6 @@ public static class AiChatEndpoints
     // -----------------------------------------------------------------------
     // 小工具
     // -----------------------------------------------------------------------
-
-    private static int ContextCharBudget(ProfileSnapshotService snapshot)
-    {
-        // maxContext 是 token 数；中文约 1 token/字，留 45% 给历史并按 1.5 倍保守放大
-        var maxContext = snapshot.GetConfig()?.MaxContext ?? 32768;
-        return (int)Math.Floor(maxContext * 0.45 * 1.5);
-    }
-
-    private static List<ChatMessageItem> TrimHistory(List<(string Role, string Content)> rows, int maxChars)
-    {
-        var recent = rows.Count > HistoryMaxCount ? rows.Skip(rows.Count - HistoryMaxCount).ToList() : rows;
-        var outList = new List<ChatMessageItem>();
-        var used = 0;
-        for (var i = recent.Count - 1; i >= 0; i--)
-        {
-            var r = recent[i];
-            var c = r.Content.Length > HistoryMsgMaxChars
-                ? r.Content[..HistoryMsgMaxChars] + "…（已截断）"
-                : r.Content;
-            if (outList.Count > 0 && used + c.Length > maxChars) break;
-            outList.Insert(0, new ChatMessageItem(r.Role == ChatMessageRole.Assistant ? ChatMessageRole.Assistant : ChatMessageRole.User, c));
-            used += c.Length;
-        }
-        return outList;
-    }
 
     private static List<string> ParseFocus(string? raw)
     {
@@ -444,7 +412,7 @@ public static class AiChatEndpoints
         JsonNode rawContent, List<string> focus, List<AuditTask> tasks, string? jd, string userText,
         List<(string Label, string Value)> refs, ProfileSnapshotService snapshot)
     {
-        var budget = ContextCharBudget(snapshot);
+        var budget = History.ContextCharBudget(snapshot);
         var sanitized = Prompts.SanitizeContent(rawContent.DeepClone())!;
         var pretty = sanitized.ToJsonString(PrettyJsonOptions);
         var json = pretty.Length <= budget ? pretty : CompactResume(sanitized).ToJsonString(PrettyJsonOptions);
@@ -470,33 +438,6 @@ public static class AiChatEndpoints
         if (asks.Count > 0) blocks.Add("还需要你补充：\n" + string.Join("\n", asks.Select(a => $"- {a}")));
         var text = string.Join("\n\n", blocks);
         return text.Length > 0 ? text : "（AI 未返回文本回复）";
-    }
-
-    /// <summary>记录一次 AI 调用日志（对齐 ai.ts 的 recordCall）</summary>
-    private static async Task RecordCallAsync(AppDbContext db, ProfileSnapshotService snapshot, string userId, string? reasoning, string? output, string? resumeId)
-    {
-        try
-        {
-            var cfg = snapshot.GetDefaultConfig();
-            db.LlmCallLogs.Add(new LlmCallLog
-            {
-                Id = Cuid.New(),
-                UserId = userId,
-                Kind = LlmCallKind.Chat,
-                ResumeId = resumeId,
-                Provider = LlmDefaults.ProviderName(cfg.Provider),
-                Model = cfg.Model,
-                Ok = true,
-                Reasoning = reasoning,
-                Output = output,
-                CreatedAt = DateTime.Now,
-            });
-            await db.SaveChangesAsync();
-        }
-        catch (Exception ex)
-        {
-            Console.Error.WriteLine($"[AI] 记录调用日志失败: {ex.Message}");
-        }
     }
 
     // -----------------------------------------------------------------------
@@ -749,15 +690,11 @@ public static class AiChatEndpoints
                 .OrderBy(m => m.CreatedAt)
                 .Select(m => new { m.Role, m.Content })
                 .ToListAsync();
-            var history = historyRows.Select(m => (m.Role, m.Content)).ToList();
+            var history = historyRows.Select(m => new HistoryRow(m.Role, m.Content)).ToList();
 
             // 用户最近说过的话（仅 user 角色，含本条）：事实核验与时间抽取都只认用户自己的话——
             // AI 回复里天然带大量日期，混进来会让「哪段日期属于本条经历」的判断失真。
-            var recentHistory = history.Count > HistoryMaxCount
-                ? history.Skip(history.Count - HistoryMaxCount).ToList()
-                : history;
-            var userConvoText = string.Join("\n",
-                recentHistory.Where(r => r.Role == ChatMessageRole.User).Select(r => r.Content).Append(userText));
+            var userConvoText = History.GetRecentUserText(history, userText);
 
             // 先落库用户消息：即使 LLM 失败，用户说的话也不丢
             db.AiChatMessages.Add(new AiChatMessage { SessionId = id, Role = ChatMessageRole.User, Content = userText });
@@ -769,9 +706,9 @@ public static class AiChatEndpoints
             var reasoningTxt = new StringBuilder();
             try
             {
-                var budget = ContextCharBudget(snapshot);
+                var budget = History.ContextCharBudget(snapshot);
                 var messages = new List<ChatMessageItem> { new(ChatMessageRole.System, ChatSystemPrompt) };
-                messages.AddRange(TrimHistory(history, budget));
+                messages.AddRange(History.GetHistoryForLLM(history, budget));
                 messages.Add(new ChatMessageItem(ChatMessageRole.User, BuildChatUserContent(
                     rawContent, focus, tasks, session.Jd, userText, ExtractRefs(userText, content, rawContent), snapshot)));
 
@@ -850,7 +787,8 @@ public static class AiChatEndpoints
                 if (tracked.Title == "新对话") tracked.Title = userText[..Math.Min(20, userText.Length)];
                 await db.SaveChangesAsync();
 
-                await RecordCallAsync(db, snapshot, userId, reasoningTxt.Length > 0 ? reasoningTxt.ToString() : null, text, session.ResumeId);
+                await CallLog.RecordCallAsync(db, snapshot, userId, LlmCallKind.Chat, session.ResumeId, ok: true,
+                    reasoning: reasoningTxt.Length > 0 ? reasoningTxt.ToString() : null, output: text);
 
                 await sse.SendAsync("result", new { message = MessageToRecord(assistant), edits, rejected }, ct);
                 await sse.SendAsync("done", new { ok = true }, ct);

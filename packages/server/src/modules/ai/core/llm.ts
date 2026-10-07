@@ -61,8 +61,8 @@ export function listProfiles(): { profiles: LLMProfile[]; activeId: string | nul
   return { profiles: _profiles.map((p) => ({ ...p })), activeId: _activeId };
 }
 
-/** 返回 provider 的默认 baseUrl / model，供持久化前兜底 */
-export function defaultsFor(provider: LLMProvider): { baseUrl: string; model: string } {
+/** 返回 provider 的默认 baseUrl / model / 上下文与输出上限，供持久化前兜底 */
+export function defaultsFor(provider: LLMProvider): (typeof DEFAULTS)[LLMProvider] {
   return DEFAULTS[provider];
 }
 

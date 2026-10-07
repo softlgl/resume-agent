@@ -12,6 +12,7 @@ using ResumeAgent.Api.Auth;
 using ResumeAgent.Api.Common;
 using ResumeAgent.Api.Data;
 using ResumeAgent.Api.Endpoints;
+using ResumeAgent.Api.Endpoints.Ai;
 using ResumeAgent.Api.Services.Analysis;
 using ResumeAgent.Api.Services.Export;
 using ResumeAgent.Api.Services.Import;
@@ -86,7 +87,8 @@ app.MapGet("/health", () => Results.Json(new { ok = true }));
 
 app.MapAuthEndpoints();
 app.MapResumeEndpoints();
-app.MapAiEndpoints();
+app.MapAiAnalyzeEndpoints();
+app.MapAiConfigEndpoints();
 app.MapAiChatEndpoints();
 app.MapImportEndpoints();
 app.MapExportEndpoints();

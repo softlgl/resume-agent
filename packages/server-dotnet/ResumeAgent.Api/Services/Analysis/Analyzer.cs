@@ -5,6 +5,7 @@ using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
 using ResumeAgent.Api.Common;
 using ResumeAgent.Api.Contracts;
+using ResumeAgent.Api.Services.Ai;
 using ResumeAgent.Api.Services.Llm;
 
 namespace ResumeAgent.Api.Services.Analysis;
@@ -45,7 +46,7 @@ public class Analyzer(ChatService chat, ProfileSnapshotService profiles, ILogger
         };
         var opts = new ChatOptionsEx
         {
-            JsonSchema = Prompts.AnalysisSchema,
+            JsonSchema = Schemas.AnalysisSchema,
             Temperature = 0.3,
             // 思考与正文共享预算；给足够大的上限，让真实卡点收敛到 profile.maxOutput
             MaxTokens = 262144,
@@ -257,7 +258,7 @@ public class Analyzer(ChatService chat, ProfileSnapshotService profiles, ILogger
         [
             new(ChatMessageRole.System, "你是招聘专家。请对比候选人简历和目标岗位 JD，判断匹配度。先从 JD 提取 5-10 个硬性要求（技能/经验/学历），逐条判断简历是否满足，然后列出明确的差距项。"),
             new(ChatMessageRole.User, $"简历：\n```json\n{sanitized.ToJsonString()}\n```\n\nJD：\n{jd}"),
-        ], new ChatOptionsEx { JsonSchema = Prompts.MatchSchema, Temperature = 0.2 }, runtimeOverride, ct);
+        ], new ChatOptionsEx { JsonSchema = Schemas.MatchSchema, Temperature = 0.2 }, runtimeOverride, ct);
         if (string.IsNullOrEmpty(result?.Text)) return null;
         try
         {

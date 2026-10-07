@@ -14,9 +14,11 @@ import type {
   ResumeEdit,
   EditSection,
 } from "@resume-agent/shared";
-import { chatStream, getLLMConfig, isLLMAvailable, parseJSON } from "../services/llm.js";
-import type { ChatMessage } from "../services/llm.js";
-import { sanitizeContent, recordCall } from "./ai.js";
+import { chatStream, isLLMAvailable, parseJSON } from "./core/llm.js";
+import type { ChatMessage } from "./core/llm.js";
+import { contextCharBudget, getHistoryForLLM, getRecentUserText } from "./core/history.js";
+import { sanitizeContent } from "./core/prompts.js";
+import { recordCall } from "./core/call-log.js";
 import {
   buildFieldLabel,
   checkAppendRequired,
@@ -25,7 +27,7 @@ import {
   sectionLabel,
   validateEdits,
   SETTABLE_FIELDS,
-} from "../services/resume-edit.js";
+} from "../../services/resume-edit.js";
 
 // ---------------------------------------------------------------------------
 // LLM 输出契约
@@ -102,37 +104,6 @@ const CHAT_SYSTEM_PROMPT = `你是资深简历顾问，正在帮用户修改「�
 - 若给了目标岗位 JD，改写与建议需向 JD 靠拢，但仍不得编造。
 - 面向用户阅读的文字（reply、asks 以及 edits 的 reason/risks）提到简历字段时一律用中文名（如「所在地」「职位」「求职意向」「公司名称」），禁止出现 location/role/title 这类英文键名或 JSON 路径。
 - 回复用中文，语气专业、简洁。`;
-
-// ---------------------------------------------------------------------------
-// 上下文裁剪预算
-// ---------------------------------------------------------------------------
-
-const HISTORY_MAX_COUNT = 12; // 最多带最近 12 条历史
-const HISTORY_MSG_MAX_CHARS = 2000; // 单条历史消息字符上限
-
-function contextCharBudget(): number {
-  const cfg = getLLMConfig();
-  // maxContext 是 token 数；中文约 1 token/字，留 45% 给历史并按 1.5 倍保守放大
-  const maxContext = cfg?.maxContext ?? 32768;
-  return Math.floor(maxContext * 0.45 * 1.5);
-}
-
-function trimHistory(rows: { role: string; content: string }[], maxChars: number): ChatMessage[] {
-  const recent = rows.slice(-HISTORY_MAX_COUNT);
-  const out: ChatMessage[] = [];
-  let used = 0;
-  for (let i = recent.length - 1; i >= 0; i--) {
-    const r = recent[i];
-    const c =
-      r.content.length > HISTORY_MSG_MAX_CHARS
-        ? `${r.content.slice(0, HISTORY_MSG_MAX_CHARS)}…（已截断）`
-        : r.content;
-    if (out.length > 0 && used + c.length > maxChars) break;
-    out.unshift({ role: r.role === "assistant" ? "assistant" : "user", content: c });
-    used += c.length;
-  }
-  return out;
-}
 
 // ---------------------------------------------------------------------------
 // 小工具
@@ -570,15 +541,8 @@ export async function aiChatModule(app: FastifyInstance) {
       select: { role: true, content: true },
     });
 
-    // 用户最近说过的话（仅 user 角色，含本条）：事实核验与时间抽取都只认用户自己的话——
-    // AI 回复里天然带大量日期，混进来会让「哪段日期属于本条经历」的判断失真。
-    const userConvoText = [
-      ...historyRows
-        .slice(-HISTORY_MAX_COUNT)
-        .filter((r) => r.role === "user")
-        .map((r) => r.content),
-      userText,
-    ].join("\n");
+    // 用户最近说过的话（仅 user 角色，含本条）：见 core/history.ts 的 getRecentUserText
+    const userConvoText = getRecentUserText(historyRows, userText);
 
     // 先落库用户消息：即使 LLM 失败，用户说的话也不丢
     await prisma.aiChatMessage.create({ data: { sessionId: id, role: "user", content: userText } });
@@ -595,7 +559,7 @@ export async function aiChatModule(app: FastifyInstance) {
       const budget = contextCharBudget();
       const messages: ChatMessage[] = [
         { role: "system", content: CHAT_SYSTEM_PROMPT },
-        ...trimHistory(historyRows, budget),
+        ...getHistoryForLLM(historyRows, budget),
         {
           role: "user",
           content: buildChatUserContent({

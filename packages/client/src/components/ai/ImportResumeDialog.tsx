@@ -3,8 +3,8 @@ import { createPortal } from "react-dom";
 import { useNavigate } from "react-router-dom";
 import { Loader2, Upload, X, FileText, Plus, Trash2, AlertTriangle, Brain, Braces } from "lucide-react";
 import { TEMPLATES } from "@resume-agent/shared";
-import { api, type AIProfile } from "../api/client";
-import { useResumeStore } from "../store/resume";
+import { api, type AIProfile } from "../../api/client";
+import { useResumeStore } from "../../store/resume";
 
 interface ParseResult {
   fileName: string;

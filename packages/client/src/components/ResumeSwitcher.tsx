@@ -4,7 +4,7 @@ import { useNavigate } from "react-router-dom";
 import { useResumeStore } from "../store/resume";
 import { ChevronDown, Plus, Trash2, FileText, Upload } from "lucide-react";
 import NewResumeDialog from "./NewResumeDialog";
-import ImportResumeDialog from "./ImportResumeDialog";
+import ImportResumeDialog from "./ai/ImportResumeDialog";
 
 // 顶部「我的简历 ▾」下拉：列表 / 切换 / 新建 / 删除
 export default function ResumeSwitcher() {

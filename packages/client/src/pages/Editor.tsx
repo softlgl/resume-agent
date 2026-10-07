@@ -6,11 +6,11 @@ import Preview from "../components/Preview";
 import TemplatePicker from "../components/TemplatePicker";
 import SectionForm from "../components/SectionForm";
 import ResumeSwitcher from "../components/ResumeSwitcher";
-import AIAnalysisPanel from "../components/AIAnalysisPanel";
-import ModelManager from "../components/ModelManager";
+import AIAnalysisPanel from "../components/ai/AIAnalysisPanel";
+import ModelManager from "../components/ai/ModelManager";
 import { FileDown, Save, Check, LogOut, LayoutTemplate, Sparkles, Settings, X } from "lucide-react";
 import type { WorkExp, EduExp, ProjectExp, SkillGroup, AiRevisionRecord, EditSection, ResumeEdit } from "@resume-agent/shared";
-import type { ApplyResult } from "../components/EditCard";
+import type { ApplyResult } from "../components/ai/EditCard";
 import { fieldToLabel } from "../utils/fieldLabel";
 
 // ---------------------------------------------------------------------------

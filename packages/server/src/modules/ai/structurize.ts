@@ -1,6 +1,6 @@
 // LLM 结构化：把抽取到的纯文本归一化成 ResumeContent（schema 定死键名 + 语义归一化）
 import type { ResumeContent } from "@resume-agent/shared";
-import { chatStream, parseJSON, isLLMAvailable } from "./llm.js";
+import { chatStream, parseJSON, isLLMAvailable } from "./core/llm.js";
 
 // 期望 LLM 输出 ResumeContent 结构（键名固定，语义归一化由 LLM 完成）
 const EXTRACT_SCHEMA = {

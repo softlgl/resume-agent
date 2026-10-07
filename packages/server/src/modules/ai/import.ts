@@ -1,9 +1,9 @@
 import type { FastifyInstance } from "fastify";
 import multipart from "@fastify/multipart";
-import { extractText } from "../services/extract.js";
-import { structurizeText } from "../services/structurize.js";
-import { extractSensitive, redactText, restoreSensitive } from "../services/redact.js";
-import { getDefaultConfig } from "../services/llm.js";
+import { extractText } from "../../services/extract.js";
+import { extractSensitive, redactText, restoreSensitive } from "../../services/redact.js";
+import { structurizeText } from "./structurize.js";
+import { getDefaultConfig } from "./core/llm.js";
 
 export async function importModule(app: FastifyInstance) {
   await app.register(multipart, { limits: { fileSize: 20 * 1024 * 1024, files: 1 } });

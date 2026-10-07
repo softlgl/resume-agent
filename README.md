@@ -42,17 +42,20 @@
 ```
 resume-agent/
 ├─ packages/
-│  ├─ shared/                 # 前后端共用：简历数据结构、模板配置、排版令牌
+│  ├─ shared/                 # 前后端共用：简历数据结构、模板配置、排版令牌、AI 域类型
 │  │  └─ src/
 │  │     ├─ resume.ts         # ResumeContent 等类型 + emptyResumeContent()
 │  │     ├─ templates.ts      # 6 套模板配置 + PRINT 排版令牌 + 文本工具
+│  │     ├─ ai/index.ts       # AI 域共享类型（对话、修改建议、修改账本等）
 │  │     └─ index.ts
 │  ├─ server/                 # Fastify 后端
 │  │  ├─ src/
 │  │  │  ├─ index.ts          # 应用入口（CORS / 插件 / 路由注册）
 │  │  │  ├─ plugins/          # prisma.ts（数据库）、auth.ts（JWT 校验钩子）
-│  │  │  ├─ modules/          # auth.ts、resume.ts、export.ts、ai.ts、import.ts、ai-chat.ts 路由
-│  │  │  ├─ services/         # llm.ts、extract.ts、structurize.ts、ocripy.ts、redact.ts、
+│  │  │  ├─ modules/          # auth.ts、resume.ts、export.ts 路由
+│  │  │  │  └─ ai/            # AI 域：analyze / config / chat / import / structurize + index.ts
+│  │  │  │     └─ core/       # llm / call-log / history / prompts / schemas（Node 与 .NET 同构的共享实现）
+│  │  │  ├─ services/         # extract.ts、ocripy.ts、redact.ts、
 │  │  │  │                    # resume-edit.ts（AI 修改的服务端权威校验层）
 │  │  │  ├─ types/            # 第三方库缺失类型声明（mammoth、pdfjs）
 │  │  │  └─ export/           # docx.ts、pdf.ts 渲染实现
@@ -63,9 +66,10 @@ resume-agent/
 │     └─ src/
 │        ├─ pages/            # Login.tsx、Editor.tsx
 │        ├─ components/       # Preview、SectionForm、TemplatePicker、ResumeSwitcher、
-│        │                    # NewResumeDialog、ImportResumeDialog、AIAnalysisPanel、ModelManager、
+│        │                    # NewResumeDialog、RevisionHistory（修改账本与撤销）
+│        │  └─ ai/            # AI 域组件：AIAnalysisPanel、ModelManager、
 │        │                    # ChatPanel（AI 对话）、ChatSessionPicker、EditCard（修改建议卡片）、
-│        │                    # RevisionHistory（修改账本与撤销）
+│        │                    # ImportResumeDialog（导入识别）
 │        ├─ utils/            # diff.ts（词级差异）、markdownLite.tsx、fieldLabel.ts
 │        ├─ api/client.ts     # 统一请求封装（自动携带 Bearer Token）
 │        └─ store/resume.ts   # Zustand 状态
