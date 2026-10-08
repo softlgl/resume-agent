@@ -38,7 +38,7 @@ public sealed class AppOptions
     };
 }
 
-/// <summary>.env 兜底配置：未建任何 profile 时使用（对齐 llm.ts 的 readEnvConfig）</summary>
+/// <summary>.env 兜底配置：未建任何 profile 时使用（对齐 modules/ai/core/llm.ts 的 readEnvConfig）</summary>
 public sealed class LlmEnvOptions
 {
     public string? Provider { get; init; }

@@ -1,4 +1,4 @@
-// /ai 模块的请求契约（对齐 modules/ai.ts）
+// /ai 模块的请求契约（对齐 modules/ai/*）
 
 using ResumeAgent.Api.Services.Llm;
 

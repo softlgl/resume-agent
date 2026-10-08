@@ -26,7 +26,7 @@ cd packages/server-dotnet/ResumeAgent.Api && dotnet run
 | `modules/resume.ts` | `Endpoints/ResumeEndpoints.cs` | CRUD，删除时事务清理调用日志 |
 | `modules/ai/analyze.ts` | `Endpoints/Ai/AiAnalyzeEndpoints.cs` + `Services/Analysis/` | 硬规则 + LLM 分析、归一化/防编造过滤、缓存、SSE |
 | `modules/ai/config.ts` | `Endpoints/Ai/AiConfigEndpoints.cs` | 多模型 Profile 的增删改选与内存快照 |
-| `modules/ai/chat.ts` | `Endpoints/Ai/AiChatEndpoints.cs` | AI 对话、修改建议校验与修改账本 |
+| `modules/ai/chat.ts` | `Endpoints/Ai/AiChatEndpoints.cs`（只挂路由）+ `ChatSessionEndpoints.cs` / `ChatMessageEndpoints.cs` / `RevisionEndpoints.cs`，共用 `Services/Ai/ChatProjection.cs`、`ChatAudit.cs`、`ChatPrompts.cs` | AI 对话、修改建议校验与修改账本 |
 | `modules/ai/interview.ts` | `Endpoints/Ai/AiInterviewEndpoints.cs` + `Services/Ai/InterviewHistory.cs`、`Services/Ai/InterviewPrompts.cs` | 模拟面试：计划 / 判定 / 追问 / 报告（契约见 `Contracts/AiInterviewContracts.cs`） |
 | `modules/ai/import.ts` | `Endpoints/Ai/ImportEndpoints.cs` + `Services/Import/` | docx/pdf 抽取、OCR、脱敏、结构化 |
 | `modules/export.ts` | `Endpoints/ExportEndpoints.cs` + `Services/Export/` | DOCX（OpenXml）+ PDF（QuestPDF） |
@@ -43,7 +43,7 @@ cd packages/server-dotnet/ResumeAgent.Api && dotnet run
    - provider 策略（`openai` → `response_format=json_schema`，云端 → `json_object`，本地模型 → 无该字段 + schema 注入提示词）保留在 `ChatService.ResolveResponseFormat` 与 `ChatService.BuildSchemaSystemPrompt`。
 3. OCR 仍复用 `packages/server/scripts/ocr.py`（conda + rapidocr），`OcrRunner` 通过 `Process` 调用，行为一致。
 4. DOCX 行内标题（职位 · 公司 + 右侧日期）用 **1 行 2 列嵌套表格**实现（TS 版是 RIGHT tab 制表位）：左侧标题过长时正常折行，日期固定宽度右对齐——tab 方案在标题宽度达到制表位时会把日期推出文字区造成遮挡。
-5. LLM 分析结果的归一化对模型输出的键名多变体做了兼容（分组名 `section/name/sectionName`、大小写、`field` 与 `section` 并存时优先真实字段路径），field 统一小写以匹配前端 camelCase 定位。
+5. LLM 分析结果的归一化对模型输出的键名多变体做了兼容（分组名 `section/name/sectionName`、大小写、`field` 与 `section` 并存时优先真实字段路径）。字段路径按**大小写不敏感**收敛到简历 JSON 的真实键（`basic.currentstatus` → `basic.currentStatus`、`Works[0].Description` → `works[0].description`），**不能整体 `ToLower`**：前端按真实键定位字段、按 `FIELD_LABELS` 渲染中文标签，小写化会让卡片显示成「基本信息 · currentstatus」，且「应用改写」会写进一个不存在的键。
 
 ## 已知注意点
 

@@ -1,4 +1,4 @@
-// 多模型 Profile 内存快照（对齐 llm.ts 的 refreshProfiles/listProfiles/getLLMConfig）
+// 多模型 Profile 内存快照（对齐 modules/ai/core/llm.ts 的 refreshProfiles/listProfiles/getLLMConfig）
 // 持久化在数据库 AiModelProfile 表（全局共享），AI 模块在启动与每次变更后调用 ReloadAsync。
 // 单例 + 锁，替代 TS 的模块级可变变量。
 

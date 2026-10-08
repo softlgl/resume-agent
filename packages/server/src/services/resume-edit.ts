@@ -142,6 +142,64 @@ export function parseFieldPath(field: string): ParsedPath | null {
   };
 }
 
+/**
+ * 字段路径里每个名字的「规范拼写」，小写查表用。
+ * 取 SETTABLE_FIELDS 与 FIELD_LABELS 的并集：前者是可写字段，后者是标签表——
+ * 两边都要，否则会出现「标签认得、定位不认得」的分裂。
+ */
+const CANONICAL_KEYS: Record<string, string> = (() => {
+  const map: Record<string, string> = {};
+  for (const section of Object.keys(SETTABLE_FIELDS)) map[section.toLowerCase()] = section;
+  for (const fields of Object.values(SETTABLE_FIELDS)) {
+    for (const f of fields) map[f.toLowerCase()] = f;
+  }
+  for (const key of Object.keys(FIELD_LABELS)) map[key.toLowerCase()] = key;
+  return map;
+})();
+
+/**
+ * 把模型给出的字段路径收敛到简历 JSON 的真实键（大小写不敏感 → 规范拼写）。
+ * 模型常返回 PascalCase（Works[0].Description）或把 camelKey 打成全小写
+ * （basic.currentstatus）。
+ *
+ * 为什么不能整体 toLowerCase：前端按真实键定位字段、按 FIELD_LABELS 渲染中文标签。
+ * 小写化会把 currentStatus 变成 currentstatus，于是
+ *   1）fieldToLabel 查不到标签，卡片显示成「基本信息 · currentstatus」；
+ *   2）前端 FIELD_RE 允许任意键名，会通过校验并把改写写进一个不存在的
+ *      currentstatus 键——简历里看不到任何变化。
+ * 因此这里只做「查表换成规范拼写」，认不出来的名字保持原样，不擅自改写。
+ */
+export function normalizeFieldPath(field: string): string {
+  if (!field || !field.trim()) return "";
+  const parts: string[] = [];
+  for (const raw of field.trim().split(/[.\[\]]+/).filter(Boolean)) {
+    if (/^[0-9]+$/.test(raw)) {
+      // 下标接回上一段名字：works + 0 → works[0]
+      if (parts.length > 0) parts[parts.length - 1] += `[${raw}]`;
+      continue;
+    }
+    parts.push(CANONICAL_KEYS[raw.toLowerCase()] ?? raw);
+  }
+  return parts.length === 0 ? field.trim() : parts.join(".");
+}
+
+/**
+ * 从模型给出的若干候选键里挑出真正的字段路径。
+ * 优先选含 "." 或 "[" 的（真正指向某个字段），全都不是时按序取第一个非空。
+ *
+ * 为什么不能按固定顺序取第一个非空：模型可能同时返回 section 与 field
+ * （prompt 只要求 field，并不禁止多吐 section）。固定顺序会取到 section 名
+ * （如 "works"），随后被「整段容器字段不给 rewrite」的规则清掉 rewrite——
+ * 建议还在，但"应用改写"按钮无声消失，日志里也没有任何记录。
+ *
+ * 候选顺序即回退顺序：path → field → key → section，
+ * 真实字段路径的键在前，分区名垫底。
+ */
+export function pickFieldPath(...candidates: (string | undefined | null)[]): string {
+  const list = candidates.filter((c): c is string => typeof c === "string" && c.trim().length > 0);
+  return list.find((c) => /[\[\.]/.test(c)) ?? list[0] ?? "";
+}
+
 /** 把 JSON 路径转成中文可读定位文本（与前端 fieldToLabel 口径一致） */
 export function buildFieldLabel(field: string): string {
   if (!field) return "";
@@ -505,7 +563,10 @@ export function validateEdits(
       : [];
 
     if (op === "set") {
-      const field = typeof e.field === "string" ? e.field.trim() : "";
+      // 先归一化再校验：模型可能返回 "Works[0].Description" / "basic.currentstatus" 这类
+      // 非规范拼写，不归一化会在下面的 SETTABLE_FIELDS 检查处被判「字段不可写入」。
+      // 归一化后产出的 edit.field 也是规范路径，前端可直接定位。
+      const field = normalizeFieldPath(typeof e.field === "string" ? e.field.trim() : "");
       const parsed = parseFieldPath(field);
       if (!parsed) {
         rejected.push(`${idxLabel}：字段路径无效（${field || "空"}）`);

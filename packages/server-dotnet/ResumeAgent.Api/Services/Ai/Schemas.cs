@@ -1,4 +1,4 @@
-// 分析链路的 LLM 输出 JSON Schema（对齐 Node core/schemas.ts）
+// 分析链路的 LLM 输出 JSON Schema（对齐 modules/ai/core/schemas.ts）
 // 注意：schema 保持扁平，仅在 provider 支持 json_schema 时生效；
 // DeepSeek 只有 json_object 模式，复杂 schema 会被忽略。
 

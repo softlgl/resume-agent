@@ -1,4 +1,4 @@
-// AI 分析结果模型（对齐 modules/ai.ts 的类型定义，前后端共用 JSON 形状）
+// AI 分析结果模型（对齐 packages/shared/src/ai/index.ts 的类型定义，前后端共用 JSON 形状）
 
 using System.Text.Json.Serialization;
 using ResumeAgent.Api.Contracts;

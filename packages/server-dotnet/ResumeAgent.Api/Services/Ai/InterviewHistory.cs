@@ -10,6 +10,7 @@
 
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using ResumeAgent.Api.Common;
 using ResumeAgent.Api.Contracts;
 using ResumeAgent.Api.Data;
 using ResumeAgent.Api.Services.Edit;
@@ -66,18 +67,10 @@ public static class InterviewHistory
         return s.Length == 0 ? null : s[..Math.Min(max, s.Length)];
     }
 
-    /// <summary>
-    /// 安全取属性。
-    /// JsonNode 的字符串索引器内部走 AsObject()，节点不是 JsonObject 时会抛
-    /// "The node must be of type 'JsonObject'"——所有取值都必须走这里，别直接 node[key]。
-    /// </summary>
-    private static JsonNode? Prop(JsonNode? node, string key) =>
-        node is JsonObject o ? o[key] : null;
-
     /// <summary>取字符串数组（过滤非字符串与空白项）</summary>
     public static List<string> StrArray(JsonObject? o, string key)
     {
-        if (o is null || Prop(o, key) is not JsonArray arr) return [];
+        if (o is null || ApiJson.Prop(o, key) is not JsonArray arr) return [];
         return arr
             .Where(x => x is JsonValue v && v.GetValueKind() == JsonValueKind.String)
             .Select(x => x!.GetValue<string>())
@@ -85,13 +78,13 @@ public static class InterviewHistory
     }
 
     public static string DimensionOf(JsonNode? node) =>
-        CleanText(Prop(node, "dimension"), 32) == InterviewDimension.Depth
+        CleanText(ApiJson.Prop(node, "dimension"), 32) == InterviewDimension.Depth
             ? InterviewDimension.Depth
             : InterviewDimension.Authenticity;
 
     public static string VerdictOf(JsonNode? node)
     {
-        var v = CleanText(Prop(node, "verdict"), 16);
+        var v = CleanText(ApiJson.Prop(node, "verdict"), 16);
         return v == InterviewVerdict.Fail ? InterviewVerdict.Fail
             : v == InterviewVerdict.Weak ? InterviewVerdict.Weak
             : InterviewVerdict.Pass;
@@ -99,7 +92,7 @@ public static class InterviewHistory
 
     public static int? ScoreOf(JsonNode? node)
     {
-        if (Prop(node, "score") is not JsonValue sv || sv.GetValueKind() != JsonValueKind.Number) return null;
+        if (ApiJson.Prop(node, "score") is not JsonValue sv || sv.GetValueKind() != JsonValueKind.Number) return null;
         var n = sv.GetValue<double>();
         if (double.IsNaN(n) || double.IsInfinity(n)) return null;
         return Math.Clamp((int)Math.Round(n), 0, 100);

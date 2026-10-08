@@ -1,4 +1,4 @@
-// ChatService 的入参 / 出参模型（对齐 llm.ts 的 ChatMessage / ChatOptions）
+// ChatService 的入参 / 出参模型（对齐 modules/ai/core/llm.ts 的 ChatMessage / ChatOptions）
 
 using System.Text.Json;
 using System.Text.Json.Serialization;

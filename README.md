@@ -220,6 +220,8 @@ npm run start --workspace=@resume-agent/server  # 运行编译后的后端
 | PATCH | `/ai/revisions/:id` | 标记撤销（body：`{ reverted }`）；简历内容的回写由前端完成，服务端只当账本 |
 
 > AI 修改建议在服务端由 `services/resume-edit.ts` 统一归一化与校验：拦截路径注入、下标越界、容器覆写、姓名改写、AI 编造事实字段（时间 / 链接 / 联系方式等）；月份类字段统一收敛为 `YYYY-MM`，`至今` 改用 `works[].current` 布尔表示。
+>
+> 字段路径按**大小写不敏感**收敛到简历 JSON 的真实键（`basic.currentstatus` → `basic.currentStatus`、`Works[0].Description` → `works[0].description`）——模型偶发的大小写偏差只会让字段定位失败，不应变成"建议被丢弃"。
 
 ### 模拟面试
 

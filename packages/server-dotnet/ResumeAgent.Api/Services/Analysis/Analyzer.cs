@@ -1,4 +1,4 @@
-// LLM 分析 + 归一化 + 防编造过滤（对齐 modules/ai.ts 的 llmAnalyze / mergeIssues / analyze / jdMatch）
+// LLM 分析 + 归一化 + 防编造过滤（对齐 modules/ai/analyze.ts 的 llmAnalyze / mergeIssues / analyze / jdMatch）
 
 using System.Text.Json;
 using System.Text.Json.Nodes;
@@ -6,6 +6,7 @@ using System.Text.RegularExpressions;
 using ResumeAgent.Api.Common;
 using ResumeAgent.Api.Contracts;
 using ResumeAgent.Api.Services.Ai;
+using ResumeAgent.Api.Services.Edit;
 using ResumeAgent.Api.Services.Llm;
 
 namespace ResumeAgent.Api.Services.Analysis;
@@ -148,7 +149,10 @@ public class Analyzer(ChatService chat, ProfileSnapshotService profiles, ILogger
                 // 格式1: 扁平数组
                 foreach (var item in flat.OfType<JsonObject>())
                 {
-                    var field = (GetFirstString(item, "path", "section", "field", "key") ?? "").ToLowerInvariant();
+                    // 与 MakeIssue 用同一套挑选+归一化口径，保证「分到哪个桶」和「issue 的 field」一致
+                    var field = ResumeEditValidator.NormalizeFieldPath(ResumeEditValidator.PickFieldPath(
+                        GetFirstString(item, "path"), GetFirstString(item, "field"),
+                        GetFirstString(item, "key"), GetFirstString(item, "section")));
                     var issue = MakeIssue(item);
                     if (field.StartsWith("basic") || field.StartsWith("基本")) sections.Basic.Add(issue);
                     else if (field.StartsWith("works") || field.StartsWith("工作")) sections.Works.Add(issue);
@@ -178,12 +182,16 @@ public class Analyzer(ChatService chat, ProfileSnapshotService profiles, ILogger
 
     private static Issue MakeIssue(JsonObject item, string defaultField = "")
     {
-        // field 统一归一化为小写：前端按简历 JSON 的 camelCase 键定位字段
-        // （basic.summary / works[0].description），模型常返回 "Works[0].Description"，
-        // 大小写不一致会导致"应用改写"定位失败
-        // 注意键优先级：field/path 是真实字段路径；section 是分区名（格式 1 变体里两者并存），
-        // 若 section 优先会把 "Works" 当字段路径，进而触发整段过滤把 rewrite 清掉
-        var field = (GetFirstString(item, "path", "field", "key", "section") ?? defaultField).ToLowerInvariant();
+        // 字段路径有两个处理步骤：
+        //   1) PickFieldPath：从 path/field/key/section 里挑真正像字段路径的那个——
+        //      模型同时返回 section 与 field 时，固定顺序会取到 section 名，
+        //      导致 rewrite 被「整段容器字段」规则静默清掉。
+        //   2) NormalizeFieldPath：收敛到简历 JSON 的真实键（模型可能返回
+        //      "Works[0].Description" 或 "basic.currentstatus"）。只能做大小写归一，
+        //      不能整体小写——前端按真实键定位字段并渲染中文标签。
+        var field = ResumeEditValidator.NormalizeFieldPath(ResumeEditValidator.PickFieldPath(
+            GetFirstString(item, "path"), GetFirstString(item, "field"),
+            GetFirstString(item, "key"), GetFirstString(item, "section"), defaultField));
         var problem = GetFirstString(item, "problem", "issue", "description", "message") ?? "";
         var suggestion = GetFirstString(item, "suggestion", "fix");
         // 关键：提取 AI 修正后的完整内容（兼容不同模型可能用的字段名）

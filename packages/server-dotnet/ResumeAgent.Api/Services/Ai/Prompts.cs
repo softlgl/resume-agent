@@ -1,4 +1,4 @@
-// 提示词与脱敏（对齐 Node core/prompts.ts）
+// 提示词与脱敏（对齐 modules/ai/core/prompts.ts）
 // - sanitizeContent：发送给 LLM 前的隐私脱敏，分析与对话共用同一份实现
 // - BuildSystemPrompt / BuildUserPrompt：分析链路的提示词
 // - SanitizeContent：分析与对话共用（对话侧 BuildChatUserContent 复用同一份逻辑）

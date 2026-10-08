@@ -33,7 +33,7 @@ public static class ResumeEditValidator
         [ResumeSection.Skills] = ["category", "items"],
     };
 
-    /// <summary>append 必填项（口径与 ai.ts ruleChecks 对齐）</summary>
+    /// <summary>append 必填项（口径与 modules/ai/analyze.ts 的 ruleChecks 对齐）</summary>
     public static readonly Dictionary<string, string[]> AppendRequired = new()
     {
         [ResumeSection.Works] = ["company", "role", "start"],
@@ -97,6 +97,23 @@ public static class ResumeEditValidator
         [ResumeSection.Projects] = new() { ["name"] = "项目名称" },
     };
 
+    /// <summary>
+    /// 字段路径里每个名字的「规范拼写」，大小写不敏感查找。
+    /// 取SettableFields 与 FieldLabels 的并集：前者是可写字段，后者是标签表——
+    /// 两边都要，否则会出现「标签认得、定位不认得」的分裂。
+    /// </summary>
+    private static readonly Dictionary<string, string> CanonicalKeys = BuildCanonicalKeys();
+
+    private static Dictionary<string, string> BuildCanonicalKeys()
+    {
+        var map = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var section in SettableFields.Keys) map[section] = section;
+        foreach (var fields in SettableFields.Values)
+            foreach (var f in fields) map[f] = f;
+        foreach (var key in FieldLabels.Keys) map[key] = key;
+        return map;
+    }
+
     // -----------------------------------------------------------------------
     // 路径解析
     // -----------------------------------------------------------------------
@@ -120,6 +137,56 @@ public static class ResumeEditValidator
             m.Groups[1].Value,
             m.Groups[2].Success ? int.Parse(m.Groups[2].Value) : null,
             m.Groups[3].Success ? m.Groups[3].Value : null);
+    }
+
+    /// <summary>
+    /// 把模型给出的字段路径收敛到简历 JSON 的真实键（大小写不敏感 → 规范拼写）。
+    /// 模型常返回 PascalCase（Works[0].Description）或把 camelKey 打成全小写
+    /// （basic.currentstatus）。
+    ///
+    /// 为什么不能整体 ToLower：前端按真实键定位字段、按 FIELD_LABELS 渲染中文标签。
+    /// 小写化会把 currentStatus 变成 currentstatus，于是
+    ///   1）fieldToLabel 查不到标签，卡片显示成「基本信息 · currentstatus」；
+    ///   2）前端 FIELD_RE 允许任意键名，会通过校验并把改写写进一个不存在的
+    ///      currentstatus 键——简历里看不到任何变化。
+    /// 因此这里只做「查表换成规范拼写」，认不出来的名字保持原样，不擅自改写。
+    /// </summary>
+    public static string NormalizeFieldPath(string? field)
+    {
+        if (string.IsNullOrWhiteSpace(field)) return "";
+        var parts = new List<string>();
+        foreach (var raw in PathSplitRegex.Split(field.Trim()))
+        {
+            if (raw.Length == 0) continue;
+            if (int.TryParse(raw, out _))
+            {
+                // 下标接回上一段名字：works + 0 → works[0]
+                if (parts.Count > 0) parts[^1] += "[" + raw + "]";
+                continue;
+            }
+            parts.Add(CanonicalKeys.TryGetValue(raw, out var canonical) ? canonical : raw);
+        }
+        return parts.Count == 0 ? field.Trim() : string.Join('.', parts);
+    }
+
+    /// <summary>
+    /// 从模型给出的若干候选键里挑出真正的字段路径。
+    /// 优先选含 "." 或 "[" 的（真正指向某个字段），全都不是时按序取第一个非空。
+    ///
+    /// 为什么不能按固定顺序取第一个非空：模型可能同时返回 section 与 field
+    /// （prompt 只要求 field，并不禁止多吐 section）。固定顺序会取到 section 名
+    /// （如 "works"），随后被「整段容器字段不给 rewrite」的规则清掉 rewrite——
+    /// 建议还在，但「应用改写」按钮无声消失，日志里也没有任何记录。
+    ///
+    /// 候选顺序即回退顺序：path → field → key → section，真实字段路径的键在前，分区名垫底。
+    /// </summary>
+    public static string PickFieldPath(params string?[] candidates)
+    {
+        var list = new List<string>();
+        foreach (var c in candidates)
+            if (!string.IsNullOrWhiteSpace(c)) list.Add(c);
+        var picked = list.FirstOrDefault(c => c.Contains('.') || c.Contains('['));
+        return picked ?? (list.Count > 0 ? list[0] : "");
     }
 
     /// <summary>section 的中文名（供拼装追问文案）</summary>
@@ -335,7 +402,7 @@ public static class ResumeEditValidator
     }
 
     // -----------------------------------------------------------------------
-    // 建议式文字过滤（沿用 ai.ts stripSuggestionRewrites 的语义）
+    // 建议式文字过滤（沿用 modules/ai/analyze.ts stripSuggestionRewrites 的语义）
     // -----------------------------------------------------------------------
 
     private static readonly Regex[] SuggestionPatterns =
@@ -635,7 +702,10 @@ public static class ResumeEditValidator
 
             if (op == EditOp.Set)
             {
-                var field = GetJsonString(entry, "field");
+                // 先归一化再校验：模型可能返回 "Works[0].Description" / "basic.currentstatus" 这类
+                // 非规范拼写，不归一化会在下面的 SettableFields 检查处被判「字段不可写入」。
+                // 归一化后产出的 edit.Field 也是规范路径，前端可直接定位。
+                var field = NormalizeFieldPath(GetJsonString(entry, "field"));
                 var parsed = ParseFieldPath(field);
                 if (parsed is null)
                 {

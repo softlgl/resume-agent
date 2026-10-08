@@ -1,4 +1,4 @@
-// LLM 调用日志（统一出口，对齐 Node core/call-log.ts）
+// LLM 调用日志（统一出口，对齐 modules/ai/core/call-log.ts）
 // 分析 / 对话 / 导入三条链路共用同一份实现。
 // ok 语义由调用方决定：分析、对话固定 true；导入按「是否解析成功」传 content is not null。
 

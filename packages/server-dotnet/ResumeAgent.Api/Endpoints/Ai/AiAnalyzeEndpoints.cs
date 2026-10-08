@@ -16,8 +16,6 @@ namespace ResumeAgent.Api.Endpoints.Ai;
 
 public static class AiAnalyzeEndpoints
 {
-    private static IResult Error(string msg, int code) => Results.Json(new { error = msg }, statusCode: code);
-
     public static IEndpointRouteBuilder MapAiAnalyzeEndpoints(this IEndpointRouteBuilder app)
     {
         var group = app.MapGroup("/ai").RequireAuthorization();
@@ -27,25 +25,25 @@ public static class AiAnalyzeEndpoints
             string resumeId, AnalyzeAppliedRequest body, ClaimsPrincipal principal, AppDbContext db) =>
         {
             var userId = principal.UserId();
-            if (userId is null) return Error("未登录", 401);
+            if (userId is null) return ApiJson.Error("未登录", 401);
             var section = body.Section;
             var index = body.Index;
-            if (string.IsNullOrEmpty(section) || index is null) return Error("section 与 index 必填", 400);
+            if (string.IsNullOrEmpty(section) || index is null) return ApiJson.Error("section 与 index 必填", 400);
 
             var resume = await db.Resumes.FirstOrDefaultAsync(r => r.Id == resumeId);
-            if (resume is null || resume.UserId != userId) return Error("简历不存在", 404);
+            if (resume is null || resume.UserId != userId) return ApiJson.Error("简历不存在", 404);
             var analysisJson = resume.AnalysisJson;
-            if (analysisJson is null) return Error("无效的 section / index", 400);
+            if (analysisJson is null) return ApiJson.Error("无效的 section / index", 400);
 
             JsonNode? analysis;
             try { analysis = JsonNode.Parse(analysisJson); }
-            catch (JsonException) { return Error("无效的 section / index", 400); }
+            catch (JsonException) { return ApiJson.Error("无效的 section / index", 400); }
             var sections = analysis?["sections"] as JsonObject;
             if (sections is null || !new[] { ResumeSection.Basic, ResumeSection.Works, ResumeSection.Projects, ResumeSection.Skills }.Contains(section) ||
                 sections[section] is not JsonArray list ||
                 index >= list.Count || list[index.Value] is not JsonObject issue)
             {
-                return Error("无效的 section / index", 400);
+                return ApiJson.Error("无效的 section / index", 400);
             }
             issue["applied"] = true;
             resume.AnalysisJson = analysis!.ToJsonString();
@@ -60,7 +58,7 @@ public static class AiAnalyzeEndpoints
             CancellationToken requestAborted) =>
         {
             var userId = principal.UserId();
-            if (userId is null) return Error("未登录", 401);
+            if (userId is null) return ApiJson.Error("未登录", 401);
 
             var streaming = body.Streaming == true;
             ResumeContent content;
@@ -70,7 +68,7 @@ public static class AiAnalyzeEndpoints
                 resumeId = body.ResumeId;
                 var resume = await db.Resumes.AsNoTracking()
                     .FirstOrDefaultAsync(r => r.Id == resumeId && r.UserId == userId);
-                if (resume is null) return Error("简历不存在", 404);
+                if (resume is null) return ApiJson.Error("简历不存在", 404);
                 content = resume.Content;
 
                 // 基础分析（无 JD）：若有已存的缓存结果且未要求强制刷新 → 直接返回，不重复消耗 LLM
@@ -95,7 +93,7 @@ public static class AiAnalyzeEndpoints
             }
             else
             {
-                return Error("参数格式不正确", 400);
+                return ApiJson.Error("参数格式不正确", 400);
             }
 
             var cb = streaming ? new SseWriter(http.Response) : null;

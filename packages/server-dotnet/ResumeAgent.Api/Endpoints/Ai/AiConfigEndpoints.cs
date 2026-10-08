@@ -12,8 +12,6 @@ namespace ResumeAgent.Api.Endpoints.Ai;
 
 public static class AiConfigEndpoints
 {
-    private static IResult Error(string msg, int code) => Results.Json(new { error = msg }, statusCode: code);
-
     private static string MaskApiKey(string key)
     {
         if (string.IsNullOrEmpty(key)) return "";
@@ -90,7 +88,7 @@ public static class AiConfigEndpoints
         // 增删改选模型 profile：body { action: 'add'|'update'|'remove'|'setActive'|'clear', ... }
         group.MapPost("/config", async (AiConfigRequest body, ClaimsPrincipal principal, AppDbContext db, ProfileSnapshotService snapshot) =>
         {
-            if (principal.UserId() is null) return Error("未登录", 401);
+            if (principal.UserId() is null) return ApiJson.Error("未登录", 401);
             var action = body.Action ?? "add";
 
             switch (action)
@@ -99,7 +97,7 @@ public static class AiConfigEndpoints
                 {
                     var providerName = body.Provider;
                     var provider = LlmDefaults.Parse(providerName);
-                    if (provider is null) return Error("provider 必填", 400);
+                    if (provider is null) return ApiJson.Error("provider 必填", 400);
                     var def = ProfileSnapshotService.DefaultsFor(provider.Value);
                     var count = await db.AiModelProfiles.CountAsync();
                     var model = body.Model?.Trim();
@@ -122,9 +120,9 @@ public static class AiConfigEndpoints
                 }
                 case "update":
                 {
-                    if (body.Id is null) return Error("id 必填", 400);
+                    if (body.Id is null) return ApiJson.Error("id 必填", 400);
                     var t = await db.AiModelProfiles.FirstOrDefaultAsync(x => x.Id == body.Id);
-                    if (t is null) return Error("模型不存在", 404);
+                    if (t is null) return ApiJson.Error("模型不存在", 404);
                     var provider = LlmDefaults.Parse(body.Provider) ?? LlmDefaults.Parse(t.Provider) ?? LlmProvider.Openai;
                     var model = body.Model?.Trim();
                     t.Name = body.Name?.Trim() ?? t.Name;
@@ -140,9 +138,9 @@ public static class AiConfigEndpoints
                 }
                 case "remove":
                 {
-                    if (body.Id is null) return Error("id 必填", 400);
+                    if (body.Id is null) return ApiJson.Error("id 必填", 400);
                     var t = await db.AiModelProfiles.FirstOrDefaultAsync(x => x.Id == body.Id);
-                    if (t is null) return Error("模型不存在", 404);
+                    if (t is null) return ApiJson.Error("模型不存在", 404);
                     db.AiModelProfiles.Remove(t);
                     await db.SaveChangesAsync();
                     // 删除激活项时让第一条成为新的激活
@@ -155,9 +153,9 @@ public static class AiConfigEndpoints
                 }
                 case "setActive":
                 {
-                    if (body.Id is null) return Error("id 必填", 400);
+                    if (body.Id is null) return ApiJson.Error("id 必填", 400);
                     var t = await db.AiModelProfiles.FirstOrDefaultAsync(x => x.Id == body.Id);
-                    if (t is null) return Error("模型不存在", 404);
+                    if (t is null) return ApiJson.Error("模型不存在", 404);
                     await db.AiModelProfiles.Where(x => x.Active).ExecuteUpdateAsync(s => s.SetProperty(x => x.Active, false));
                     t.Active = true;
                     break;
@@ -166,7 +164,7 @@ public static class AiConfigEndpoints
                     await db.AiModelProfiles.ExecuteDeleteAsync();
                     break;
                 default:
-                    return Error($"未知 action: {action}", 400);
+                    return ApiJson.Error($"未知 action: {action}", 400);
             }
             await db.SaveChangesAsync();
             await snapshot.ReloadAsync();
@@ -176,7 +174,7 @@ public static class AiConfigEndpoints
         // 清空所有模型 profile（回到 .env 逻辑）
         group.MapDelete("/config", async (ClaimsPrincipal principal, AppDbContext db, ProfileSnapshotService snapshot) =>
         {
-            if (principal.UserId() is null) return Error("未登录", 401);
+            if (principal.UserId() is null) return ApiJson.Error("未登录", 401);
             await db.AiModelProfiles.ExecuteDeleteAsync();
             await snapshot.ReloadAsync();
             return Results.Json(ConfigPayload(snapshot));

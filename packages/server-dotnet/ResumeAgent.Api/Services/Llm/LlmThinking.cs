@@ -1,4 +1,4 @@
-// 思考（reasoning / thinking）开关：按 provider 注入各家非标准扩展参数（对齐 llm.ts 的 applyThinkingMode）
+// 思考（reasoning / thinking）开关：按 provider 注入各家非标准扩展参数（对齐 modules/ai/core/llm.ts 的 applyThinkingMode）
 //
 // 三态语义：
 // - follow：不注入任何参数，保持各家默认行为（即改造前的基线）

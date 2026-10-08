@@ -8,7 +8,7 @@ import { chat, chatStream, parseJSON, isLLMAvailable, setRuntimeConfig } from ".
 import { ANALYSIS_SCHEMA, MATCH_SCHEMA } from "./core/schemas.js";
 import { buildSystemPrompt, buildUserPrompt, sanitizeContent } from "./core/prompts.js";
 import { recordCall } from "./core/call-log.js";
-import { isNoRewriteField } from "../../services/resume-edit.js";
+import { isNoRewriteField, normalizeFieldPath, pickFieldPath } from "../../services/resume-edit.js";
 
 // ---------------------------------------------------------------------------
 // 类型定义（前后端共用，后续可搬到 shared 包）
@@ -184,7 +184,14 @@ async function llmAnalyze(content: ResumeContent, jd?: string, onReasoning?: (de
   let sectionsNormalized: { basic: Issue[]; works: Issue[]; projects: Issue[]; skills: Issue[] };
 
   function makeIssue(item: any, defaultField = ""): Issue {
-    const field = item.path ?? item.section ?? item.field ?? item.key ?? defaultField;
+    // 字段路径有两个处理步骤：
+    //   1) pickFieldPath：从 path/field/key/section 里挑真正像字段路径的那个——
+    //      模型同时返回 section 与 field 时，固定顺序会取到 section 名，
+    //      导致 rewrite 被「整段容器字段」规则静默清掉。
+    //   2) normalizeFieldPath：收敛到简历 JSON 的真实键（模型可能返回
+    //      "Works[0].Description" 或 "basic.currentstatus"）。只能做大小写归一，
+    //      不能整体 toLowerCase——前端按真实键定位字段并渲染中文标签。
+    const field = normalizeFieldPath(pickFieldPath(item.path, item.field, item.key, item.section, defaultField));
     const problem = item.problem ?? item.issue ?? item.description ?? item.message ?? "";
     const suggestion = item.suggestion ?? item.fix ?? undefined;
     // 关键：提取 AI 修正后的完整内容（兼容不同模型可能用的字段名）
@@ -218,7 +225,8 @@ async function llmAnalyze(content: ResumeContent, jd?: string, onReasoning?: (de
       // 格式1: 扁平数组
       sectionsNormalized = { basic: [], works: [], projects: [], skills: [] };
       for (const item of rawSections) {
-        const field = item.path ?? item.section ?? item.field ?? item.key ?? "";
+        // 与 makeIssue 用同一套挑选+归一化口径，保证「分到哪个桶」和「issue 的 field」一致
+        const field = normalizeFieldPath(pickFieldPath(item.path, item.field, item.key, item.section));
         const issue = makeIssue(item);
         if (field.startsWith("basic") || field.startsWith("基本")) sectionsNormalized.basic.push(issue);
         else if (field.startsWith("works") || field.startsWith("工作")) sectionsNormalized.works.push(issue);

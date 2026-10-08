@@ -1,4 +1,4 @@
-// 原始 OpenAI 兼容 /chat/completions 客户端（对齐 llm.ts 的 chat / chatStream 线协议）
+// 原始 OpenAI 兼容 /chat/completions 客户端（对齐 modules/ai/core/llm.ts 的 chat / chatStream 线协议）
 //
 // 为什么所有 provider（含 openai 官方）都走这里，而不用 MEAI / OpenAI 官方 SDK：
 // 1) OpenAI .NET SDK 在模型绑定阶段会丢弃非标准字段——第三方 OpenAI 兼容端点

@@ -3,6 +3,7 @@
 using System.Security.Claims;
 using Microsoft.EntityFrameworkCore;
 using ResumeAgent.Api.Auth;
+using ResumeAgent.Api.Common;
 using ResumeAgent.Api.Contracts;
 using ResumeAgent.Api.Data;
 
@@ -11,8 +12,6 @@ namespace ResumeAgent.Api.Endpoints;
 public static class ResumeEndpoints
 {
     public sealed record SaveResumeRequest(string? Title = null, string? TemplateId = null, ResumeContent? Content = null);
-
-    private static IResult Error(string msg, int code) => Results.Json(new { error = msg }, statusCode: code);
 
     public static IEndpointRouteBuilder MapResumeEndpoints(this IEndpointRouteBuilder app)
     {
@@ -33,7 +32,7 @@ public static class ResumeEndpoints
         {
             var userId = principal.UserId()!;
             var resume = await db.Resumes.AsNoTracking().FirstOrDefaultAsync(r => r.Id == id && r.UserId == userId);
-            if (resume is null) return Error("简历不存在", 404);
+            if (resume is null) return ApiJson.Error("简历不存在", 404);
             return Results.Json(new { resume });
         });
 
@@ -41,7 +40,7 @@ public static class ResumeEndpoints
         {
             var userId = principal.UserId()!;
             if (string.IsNullOrWhiteSpace(body.Title) || body.Title.Length > 80 || string.IsNullOrEmpty(body.TemplateId) || body.Content is null)
-                return Error("数据格式不正确", 400);
+                return ApiJson.Error("数据格式不正确", 400);
             var resume = new Resume
             {
                 UserId = userId,
@@ -58,9 +57,9 @@ public static class ResumeEndpoints
         {
             var userId = principal.UserId()!;
             if (string.IsNullOrWhiteSpace(body.Title) || body.Title.Length > 80 || string.IsNullOrEmpty(body.TemplateId) || body.Content is null)
-                return Error("数据格式不正确", 400);
+                return ApiJson.Error("数据格式不正确", 400);
             var resume = await db.Resumes.FirstOrDefaultAsync(r => r.Id == id && r.UserId == userId);
-            if (resume is null) return Error("简历不存在", 404);
+            if (resume is null) return ApiJson.Error("简历不存在", 404);
             resume.Title = body.Title;
             resume.TemplateId = body.TemplateId;
             resume.Content = body.Content.Normalize();
@@ -72,7 +71,7 @@ public static class ResumeEndpoints
         {
             var userId = principal.UserId()!;
             var resume = await db.Resumes.FirstOrDefaultAsync(r => r.Id == id && r.UserId == userId);
-            if (resume is null) return Error("简历不存在", 404);
+            if (resume is null) return ApiJson.Error("简历不存在", 404);
             // 级联清理：以下表的 resumeId 无外键约束，删除简历前手动删除其关联数据（等价于数据库级联）
             var sessionIds = await db.AiChatSessions.Where(s => s.ResumeId == id).Select(s => s.Id).ToListAsync();
             await using var tx = await db.Database.BeginTransactionAsync();

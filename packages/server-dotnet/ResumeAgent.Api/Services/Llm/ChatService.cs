@@ -1,4 +1,4 @@
-// 聊天服务（对齐 llm.ts 的 chat / chatStream）：
+// 聊天服务（对齐 modules/ai/core/llm.ts 的 chat / chatStream）：
 // - provider 策略：openai 用 response_format=json_schema；deepseek/doubao/qwen 用 json_object；本地模型无 response_format
 //   非 openai 一律把 JSON Schema 文本注入 system 提示词（它们拿不到 json_schema，只能靠提示约束结构）
 // - 所有 provider 统一走 RawOpenAiStream（自建请求体），原因见该文件头部注释

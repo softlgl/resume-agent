@@ -25,6 +25,7 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using Microsoft.EntityFrameworkCore;
 using ResumeAgent.Api.Auth;
+using ResumeAgent.Api.Common;
 using ResumeAgent.Api.Contracts;
 using ResumeAgent.Api.Data;
 using ResumeAgent.Api.Services.Ai;
@@ -35,24 +36,9 @@ namespace ResumeAgent.Api.Endpoints.Ai;
 
 public static class AiInterviewEndpoints
 {
-    private static IResult Error(string msg, int code) => Results.Json(new { error = msg }, statusCode: code);
-
-    private static string ToIso(DateTime v)
-    {
-        if (v.Kind == DateTimeKind.Unspecified) v = DateTime.SpecifyKind(v, DateTimeKind.Local);
-        return v.ToUniversalTime().ToString("yyyy-MM-dd'T'HH:mm:ss.fff'Z'");
-    }
-
-    private static async Task SafeSendAsync(SseWriter sse, string evt, object? data, CancellationToken ct)
-    {
-        try { await sse.SendAsync(evt, data, ct); }
-        catch (Exception ex) { Console.Error.WriteLine($"[AI-INTERVIEW] SSE 推送失败: {ex.Message}"); }
-    }
-
-    // 以下取值一律走 Prop：JsonNode 的字符串索引器在非 JsonObject 上会抛
-    // "The node must be of type 'JsonObject'"，模型偶尔返回数组/标量时不能让它炸掉整轮。
-    private static JsonNode? Prop(JsonNode? node, string key) =>
-        node is JsonObject o ? o[key] : null;
+    /// <summary>SSE 写入失败（客户端已断开等）不应把异常抛给上层中间件；面试链路额外留一条日志</summary>
+    private static Task SafeSendAsync(SseWriter sse, string evt, object? data, CancellationToken ct) =>
+        sse.TrySendAsync(evt, data, ct, ex => Console.Error.WriteLine($"[AI-INTERVIEW] SSE 推送失败: {ex.Message}"));
 
     /// <summary>
     /// 换题时挑考察条目。
@@ -74,10 +60,10 @@ public static class AiInterviewEndpoints
         o["edits"] is null ? default : JsonSerializer.Deserialize<JsonElement>(o["edits"]!.ToJsonString());
 
     private static string StrOf(JsonObject o, string key, int max) =>
-        InterviewHistory.CleanText(Prop(o, key), max) ?? "";
+        InterviewHistory.CleanText(ApiJson.Prop(o, key), max) ?? "";
 
     private static string? StrOrNull(JsonObject o, string key, int max) =>
-        InterviewHistory.CleanText(Prop(o, key), max);
+        InterviewHistory.CleanText(ApiJson.Prop(o, key), max);
 
     private static List<string> StrArray(JsonObject o, string key) =>
         InterviewHistory.StrArray(o, key);
@@ -309,7 +295,7 @@ public static class AiInterviewEndpoints
         var question = StrOrNull(parsed, "question", 500);
         if (question is null) return null;
 
-        var rawTarget = InterviewHistory.NormalizeTarget(Prop(parsed, "target"));
+        var rawTarget = InterviewHistory.NormalizeTarget(ApiJson.Prop(parsed, "target"));
         // 连续两题撞同一条目时强制换一个（隔题复用同一条目是允许的）
         var target = PickNextTarget(content, rawTarget, InterviewHistory.LastTargetOf(rows), history.Covered);
         var covered = MergeCovered(history.Covered, StrArray(parsed, "covered"));
@@ -352,7 +338,7 @@ public static class AiInterviewEndpoints
         return (
             new ChatMessageRecord(
                 row.Id, row.SessionId, row.Role, row.Content,
-                JsonNode.Parse(row.Edits ?? "[]"), [], null, ToIso(row.CreatedAt),
+                JsonNode.Parse(row.Edits ?? "[]"), [], null, ApiJson.ToIso(row.CreatedAt),
                 JsonNode.Parse(row.Meta!)),
             covered,
             edits);
@@ -373,11 +359,11 @@ public static class AiInterviewEndpoints
             HttpContext http, ClaimsPrincipal principal, AppDbContext db) =>
         {
             var userId = principal.UserId();
-            if (userId is null) return Error("未登录", 401);
+            if (userId is null) return ApiJson.Error("未登录", 401);
             var resumeId = http.Request.Query["resumeId"].ToString();
-            if (string.IsNullOrEmpty(resumeId)) return Error("resumeId 必填", 400);
+            if (string.IsNullOrEmpty(resumeId)) return ApiJson.Error("resumeId 必填", 400);
             if (!await db.Resumes.AsNoTracking().AnyAsync(r => r.Id == resumeId && r.UserId == userId))
-                return Error("简历不存在", 404);
+                return ApiJson.Error("简历不存在", 404);
 
             var sessions = await db.AiChatSessions.AsNoTracking()
                 .Where(s => s.ResumeId == resumeId && s.UserId == userId && s.Mode == SessionMode.Interview)
@@ -401,7 +387,7 @@ public static class AiInterviewEndpoints
                 sessions = sessions.Select(s => new InterviewSessionMeta(
                     s.Id, s.ResumeId, s.Title,
                     // Focus / Jd 仅为与前端 ChatSessionMeta 结构兼容而存在（面试不用）
-                    [], null, s.TargetRole, counts.GetValueOrDefault(s.Id), ToIso(s.LastMessageAt),
+                    [], null, s.TargetRole, counts.GetValueOrDefault(s.Id), ApiJson.ToIso(s.LastMessageAt),
                     previews.GetValueOrDefault(s.Id) is { Length: > 0 } p
                         ? p[..Math.Min(60, p.Length)]
                         : null)),
@@ -416,13 +402,13 @@ public static class AiInterviewEndpoints
             ChatService chat, ProfileSnapshotService snapshot, CancellationToken ct) =>
         {
             var userId = principal.UserId();
-            if (userId is null) return Error("未登录", 401);
+            if (userId is null) return ApiJson.Error("未登录", 401);
             var body = await http.Request.ReadFromJsonAsync<CreateInterviewSessionRequest>(ct);
-            if (body is null || string.IsNullOrEmpty(body.ResumeId)) return Error("resumeId 必填", 400);
+            if (body is null || string.IsNullOrEmpty(body.ResumeId)) return ApiJson.Error("resumeId 必填", 400);
             var resume = await db.Resumes.AsNoTracking()
                 .FirstOrDefaultAsync(r => r.Id == body.ResumeId && r.UserId == userId, ct);
-            if (resume is null) return Error("简历不存在", 404);
-            if (!snapshot.IsAvailable()) return Error("未配置 AI 模型，无法开始面试", 400);
+            if (resume is null) return ApiJson.Error("简历不存在", 404);
+            if (!snapshot.IsAvailable()) return ApiJson.Error("未配置 AI 模型，无法开始面试", 400);
 
             var content = resume.Content;
             var targetRole = (body.TargetRole ?? "").Trim();
@@ -492,8 +478,8 @@ public static class AiInterviewEndpoints
                 db.AiChatSessions.Add(session);
                 await db.SaveChangesAsync(ct);
 
-                var target = InterviewHistory.NormalizeTarget(Prop(parsed, "target"));
-                var planTotal = Prop(parsed, "planTotal") is JsonValue pv && pv.GetValueKind() == JsonValueKind.Number
+                var target = InterviewHistory.NormalizeTarget(ApiJson.Prop(parsed, "target"));
+                var planTotal = ApiJson.Prop(parsed, "planTotal") is JsonValue pv && pv.GetValueKind() == JsonValueKind.Number
                     ? Math.Clamp((int)Math.Round(pv.GetValue<double>()), 0, 100)
                     : 5;
                 var meta = new InterviewTurnMeta
@@ -547,7 +533,7 @@ public static class AiInterviewEndpoints
                         meta,
                         edits = (JsonNode?)null,
                         appliedIndexes = Array.Empty<int>(),
-                        createdAt = ToIso(assistant.CreatedAt),
+                        createdAt = ApiJson.ToIso(assistant.CreatedAt),
                     },
                 }, ct);
                 await SafeSendAsync(sse, "done", new { ok = true }, ct);
@@ -567,10 +553,10 @@ public static class AiInterviewEndpoints
             string id, ClaimsPrincipal principal, AppDbContext db) =>
         {
             var userId = principal.UserId();
-            if (userId is null) return Error("未登录", 401);
+            if (userId is null) return ApiJson.Error("未登录", 401);
             var session = await db.AiChatSessions.AsNoTracking()
                 .FirstOrDefaultAsync(s => s.Id == id && s.UserId == userId && s.Mode == SessionMode.Interview);
-            if (session is null) return Error("面试会话不存在", 404);
+            if (session is null) return ApiJson.Error("面试会话不存在", 404);
 
             var rows = await db.AiChatMessages.AsNoTracking()
                 .Where(m => m.SessionId == id).OrderBy(m => m.CreatedAt).ToListAsync();
@@ -580,14 +566,14 @@ public static class AiInterviewEndpoints
                 string.IsNullOrEmpty(r.Edits) ? null : JsonNode.Parse(r.Edits),
                 [],
                 r.Reasoning,
-                ToIso(r.CreatedAt),
+                ApiJson.ToIso(r.CreatedAt),
                 string.IsNullOrEmpty(r.Meta) ? null : JsonNode.Parse(r.Meta))).ToList();
 
             return Results.Json(new
             {
                 session = new InterviewSessionMeta(
                     session.Id, session.ResumeId, session.Title, [], null, session.TargetRole,
-                    messages.Count, ToIso(session.LastMessageAt)),
+                    messages.Count, ApiJson.ToIso(session.LastMessageAt)),
                 messages,
             });
         });
@@ -600,11 +586,11 @@ public static class AiInterviewEndpoints
             RenameInterviewSessionRequest body, CancellationToken ct) =>
         {
             var userId = principal.UserId();
-            if (userId is null) return Error("未登录", 401);
+            if (userId is null) return ApiJson.Error("未登录", 401);
             var session = await db.AiChatSessions.FirstOrDefaultAsync(s => s.Id == id && s.UserId == userId, ct);
-            if (session is null) return Error("面试不存在", 404);
+            if (session is null) return ApiJson.Error("面试不存在", 404);
             var title = (body.Title ?? "").Trim();
-            if (title.Length == 0) return Error("标题不能为空", 400);
+            if (title.Length == 0) return ApiJson.Error("标题不能为空", 400);
             session.Title = title[..Math.Min(60, title.Length)];
             await db.SaveChangesAsync(ct);
             return Results.Json(new { session = new { session.Id, session.Title } });
@@ -617,9 +603,9 @@ public static class AiInterviewEndpoints
             string id, ClaimsPrincipal principal, AppDbContext db, CancellationToken ct) =>
         {
             var userId = principal.UserId();
-            if (userId is null) return Error("未登录", 401);
+            if (userId is null) return ApiJson.Error("未登录", 401);
             var session = await db.AiChatSessions.FirstOrDefaultAsync(s => s.Id == id && s.UserId == userId, ct);
-            if (session is null) return Error("面试不存在", 404);
+            if (session is null) return ApiJson.Error("面试不存在", 404);
             db.AiChatSessions.Remove(session);
             await db.SaveChangesAsync(ct);
             return Results.Json(new { ok = true });
@@ -632,10 +618,10 @@ public static class AiInterviewEndpoints
             string id, ClaimsPrincipal principal, AppDbContext db) =>
         {
             var userId = principal.UserId();
-            if (userId is null) return Error("未登录", 401);
+            if (userId is null) return ApiJson.Error("未登录", 401);
             var session = await db.AiChatSessions.AsNoTracking()
                 .FirstOrDefaultAsync(s => s.Id == id && s.UserId == userId && s.Mode == SessionMode.Interview);
-            if (session is null) return Error("面试会话不存在", 404);
+            if (session is null) return ApiJson.Error("面试会话不存在", 404);
 
             var rows = await ReadRawRowsAsync(db, id);
             var plan = rows.Select(r => InterviewHistory.ParseMeta(r.Meta)).FirstOrDefault(m => m?.IsPlan == true);
@@ -657,23 +643,23 @@ public static class AiInterviewEndpoints
             ChatService chat, ProfileSnapshotService snapshot, CancellationToken ct) =>
         {
             var userId = principal.UserId();
-            if (userId is null) return Error("未登录", 401);
+            if (userId is null) return ApiJson.Error("未登录", 401);
             var body = await http.Request.ReadFromJsonAsync<SendInterviewMessageRequest>(ct);
             var action = string.IsNullOrEmpty(body?.Action) ? InterviewAction.Answer : body!.Action!;
             if (action is not (InterviewAction.Answer or InterviewAction.Next or InterviewAction.Finish))
-                return Error("action 不合法", 400);
+                return ApiJson.Error("action 不合法", 400);
 
             var userText = (body?.Content ?? "").Trim();
             if (userText.Length > 8000) userText = userText[..8000];
-            if (action == InterviewAction.Answer && userText.Length == 0) return Error("回答不能为空", 400);
+            if (action == InterviewAction.Answer && userText.Length == 0) return ApiJson.Error("回答不能为空", 400);
 
             var session = await db.AiChatSessions.FirstOrDefaultAsync(
                 s => s.Id == id && s.UserId == userId && s.Mode == SessionMode.Interview, ct);
-            if (session is null) return Error("面试会话不存在", 404);
+            if (session is null) return ApiJson.Error("面试会话不存在", 404);
             var resume = await db.Resumes.AsNoTracking()
                 .FirstOrDefaultAsync(r => r.Id == session.ResumeId && r.UserId == userId, ct);
-            if (resume is null) return Error("简历不存在", 404);
-            if (!snapshot.IsAvailable()) return Error("未配置 AI 模型，无法继续面试", 400);
+            if (resume is null) return ApiJson.Error("简历不存在", 404);
+            if (!snapshot.IsAvailable()) return ApiJson.Error("未配置 AI 模型，无法继续面试", 400);
 
             var content = resume.Content;
 
@@ -701,7 +687,7 @@ public static class AiInterviewEndpoints
                 await db.SaveChangesAsync(ct);
                 userRecord = new ChatMessageRecord(
                     userRow.Id, userRow.SessionId, userRow.Role, userRow.Content,
-                    null, [], null, ToIso(userRow.CreatedAt),
+                    null, [], null, ApiJson.ToIso(userRow.CreatedAt),
                     JsonNode.Parse(userRow.Meta!));
             }
 
@@ -798,7 +784,7 @@ public static class AiInterviewEndpoints
                     var score = InterviewHistory.ScoreOf(parsed);
                     // 追问判定：模型说了算，但到顶/它主动收尾就不追——审问不散是硬约束
                     var willFollow = canFollow
-                                     && Prop(parsed, "shouldFollow") is JsonValue sf
+                                     && ApiJson.Prop(parsed, "shouldFollow") is JsonValue sf
                                      && sf.GetValueKind() == JsonValueKind.True
                                      && StrOrNull(parsed, "question", 500) is not null;
 
@@ -954,6 +940,6 @@ public static class AiInterviewEndpoints
         string.IsNullOrEmpty(r.Edits) ? null : JsonNode.Parse(r.Edits),
         [],
         r.Reasoning,
-        ToIso(r.CreatedAt),
+        ApiJson.ToIso(r.CreatedAt),
         JsonSerializer.SerializeToNode(meta, AppDbContext.JsonOptions));
 }

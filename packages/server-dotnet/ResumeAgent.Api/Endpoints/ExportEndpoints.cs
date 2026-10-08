@@ -3,6 +3,7 @@
 using System.Security.Claims;
 using Microsoft.EntityFrameworkCore;
 using ResumeAgent.Api.Auth;
+using ResumeAgent.Api.Common;
 using ResumeAgent.Api.Contracts;
 using ResumeAgent.Api.Data;
 using ResumeAgent.Api.Services.Export;
@@ -13,8 +14,6 @@ public static class ExportEndpoints
 {
     public sealed record ExportRequest(string[]? PageBreakIds = null);
 
-    private static IResult Error(string msg, int code) => Results.Json(new { error = msg }, statusCode: code);
-
     public static IEndpointRouteBuilder MapExportEndpoints(this IEndpointRouteBuilder app)
     {
         var group = app.MapGroup("/export").RequireAuthorization();
@@ -24,10 +23,10 @@ public static class ExportEndpoints
             ClaimsPrincipal principal, AppDbContext db, CancellationToken ct)
         {
             var userId = principal.UserId();
-            if (userId is null) return Error("未登录", 401);
-            if (format is not ("docx" or "pdf")) return Error("不支持的格式", 400);
+            if (userId is null) return ApiJson.Error("未登录", 401);
+            if (format is not ("docx" or "pdf")) return ApiJson.Error("不支持的格式", 400);
             var resume = await db.Resumes.AsNoTracking().FirstOrDefaultAsync(r => r.Id == id && r.UserId == userId, ct);
-            if (resume is null) return Error("简历不存在", 404);
+            if (resume is null) return ApiJson.Error("简历不存在", 404);
 
             var content = resume.Content.Normalize();
             var safeName = System.Text.RegularExpressions.Regex.Replace(resume.Title ?? "resume", @"[\\/:*?""<>|]", "_");

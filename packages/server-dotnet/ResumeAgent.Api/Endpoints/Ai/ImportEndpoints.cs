@@ -1,4 +1,4 @@
-// /import 模块（对齐 modules/import.ts）：上传 .docx/.pdf → 抽取文本(扫描件走 OCR) → LLM 结构化 → SSE 流式返回
+// /import 模块（对齐 modules/ai/import.ts）：上传 .docx/.pdf → 抽取文本(扫描件走 OCR) → LLM 结构化 → SSE 流式返回
 // 流式输出：status(提取完成) → reasoning(结构化思考过程,逐字) → result(最终结构) / done
 
 using System.Security.Claims;
@@ -22,10 +22,10 @@ public static class ImportEndpoints
             HttpContext http, CancellationToken requestAborted) =>
         {
             var userId = principal.UserId();
-            if (userId is null) return Results.Json(new { error = "未登录" }, statusCode: 401);
+            if (userId is null) return ApiJson.Error("未登录", 401);
 
             var file = http.Request.Form.Files.FirstOrDefault();
-            if (file is null) return Results.Json(new { error = "未收到文件" }, statusCode: 400);
+            if (file is null) return ApiJson.Error("未收到文件", 400);
             var fileName = file.FileName is { Length: > 0 } ? file.FileName : "resume";
 
             byte[] buf;
@@ -42,7 +42,7 @@ public static class ImportEndpoints
             }
             catch (Exception ex)
             {
-                return Results.Json(new { error = ex.Message }, statusCode: 400);
+                return ApiJson.Error(ex.Message, 400);
             }
 
             // 文件解析完成，切换为 SSE 流

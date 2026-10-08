@@ -1,4 +1,4 @@
-// 硬规则检查（纯本地，零成本）：对齐 modules/ai.ts 的 ruleChecks / ruleAtsScore
+// 硬规则检查（纯本地，零成本）：对齐 modules/ai/analyze.ts 的 ruleChecks / ruleAtsScore
 
 using ResumeAgent.Api.Contracts;
 

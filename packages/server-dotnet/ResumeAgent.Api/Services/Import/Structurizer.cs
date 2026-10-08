@@ -1,4 +1,4 @@
-// LLM 结构化（对齐 services/structurize.ts）：把抽取到的纯文本归一化成 ResumeContent
+// LLM 结构化（对齐 modules/ai/structurize.ts）：把抽取到的纯文本归一化成 ResumeContent
 
 using System.Text.Json.Nodes;
 using ResumeAgent.Api.Common;

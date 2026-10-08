@@ -31,4 +31,12 @@ public class SseWriter(HttpResponse? response)
         await response.Body.WriteAsync(bytes, ct);
         await response.Body.FlushAsync(ct);
     }
+
+    /// <summary>同 SendAsync，但吞掉写入异常（客户端已断开等不应再抛给上层中间件）。
+    /// 需要留痕时传 onError。</summary>
+    public async Task TrySendAsync(string eventName, object? data, CancellationToken ct = default, Action<Exception>? onError = null)
+    {
+        try { await SendAsync(eventName, data, ct); }
+        catch (Exception ex) { onError?.Invoke(ex); }
+    }
 }

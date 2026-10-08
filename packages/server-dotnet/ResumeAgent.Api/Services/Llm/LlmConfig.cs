@@ -1,4 +1,4 @@
-// LLM 配置模型与 provider 预设（对齐 services/llm.ts 的 DEFAULTS 与 mergeAndValidate）
+// LLM 配置模型与 provider 预设（对齐 modules/ai/core/llm.ts 的 DEFAULTS 与 mergeAndValidate）
 
 namespace ResumeAgent.Api.Services.Llm;
 
