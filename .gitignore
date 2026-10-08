@@ -34,6 +34,7 @@ yarn-error.log*
 pnpm-debug.log*
 server.out.log
 client.out.log
+server-dotnet.out.log
 server.err
 
 # ---------- 数据库 ----------

@@ -90,6 +90,7 @@ app.MapResumeEndpoints();
 app.MapAiAnalyzeEndpoints();
 app.MapAiConfigEndpoints();
 app.MapAiChatEndpoints();
+app.MapAiInterviewEndpoints();
 app.MapImportEndpoints();
 app.MapExportEndpoints();
 

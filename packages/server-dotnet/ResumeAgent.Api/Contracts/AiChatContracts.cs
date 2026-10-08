@@ -62,7 +62,7 @@ public sealed record SessionMeta(
     string LastMessageAt,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Preview);
 
-/// <summary>一条对话消息</summary>
+/// <summary>一条对话消息。Meta 仅 mode=interview 会话有值（面试回合元数据）</summary>
 public sealed record ChatMessageRecord(
     string Id,
     string SessionId,
@@ -71,7 +71,8 @@ public sealed record ChatMessageRecord(
     JsonNode? Edits,
     List<int> AppliedIndexes,
     string? Reasoning,
-    string CreatedAt);
+    string CreatedAt,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] JsonNode? Meta = null);
 
 /// <summary>一笔修订账本记录</summary>
 public sealed record RevisionRecord(

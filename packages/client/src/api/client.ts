@@ -4,6 +4,9 @@ import type {
   ChatMessageRecord,
   ChatSessionMeta,
   CreateRevisionInput,
+  InterviewAction,
+  InterviewReport,
+  InterviewSessionMeta,
   ResumeEdit,
 } from "@resume-agent/shared";
 
@@ -22,7 +25,7 @@ export interface AIProfile {
 
 export interface LlmCallLog {
   id: string;
-  kind: "analyze" | "import" | "chat";
+  kind: "analyze" | "import" | "chat" | "interview";
   resumeId: string | null;
   provider: string;
   model: string;
@@ -216,6 +219,59 @@ export const api = {
     request<{ edits: ResumeEdit[]; rejected: string[]; missing: string[][] }>("/ai/chat/validate-edits", {
       method: "POST",
       body: JSON.stringify({ resumeId, edits, userText }),
+    }),
+
+  // ---- 模拟面试（mode=interview，复用对话表但 prompt/schema/历史策略独立） ----
+  interviewListSessions: (resumeId: string) =>
+    request<{ sessions: InterviewSessionMeta[] }>(
+      `/ai/interview/sessions?resumeId=${encodeURIComponent(resumeId)}`
+    ),
+  interviewCreateSession: (
+    p: { resumeId: string; title?: string; targetRole?: string; questionCount?: number },
+    onReasoning: (delta: string) => void,
+    onContent?: (delta: string) => void,
+    signal?: AbortSignal
+  ) =>
+    consumeSSEFetch<{ sessionId: string; targetRole: string | null; message: ChatMessageRecord }>(
+      "/ai/interview/sessions",
+      JSON.stringify(p),
+      onReasoning,
+      onContent,
+      false,
+      signal
+    ),
+  interviewGetSession: (id: string) =>
+    request<{
+      session: { id: string; title: string; targetRole: string | null };
+      messages: ChatMessageRecord[];
+    }>(`/ai/interview/sessions/${id}`),
+  interviewSendStream: (
+    sessionId: string,
+    body: { content?: string; action: InterviewAction },
+    onReasoning: (delta: string) => void,
+    onContent?: (delta: string) => void,
+    signal?: AbortSignal
+  ) =>
+    consumeSSEFetch<{
+      message: ChatMessageRecord;
+      /** 用户这条回答（服务端回传，前端用它替换乐观副本） */
+      userMessage?: ChatMessageRecord;
+      /** 收尾轮会紧接着开新题，此时 message 是收尾、message2 是新题 */
+      message2?: ChatMessageRecord;
+      /** 达到计划题数：服务端不再开新题，由用户决定是否继续深挖 */
+      planReached?: { planTotal: number; askedCount: number };
+      edits: ResumeEdit[];
+      covered: string[];
+      report?: InterviewReport;
+    }>(`/ai/interview/sessions/${sessionId}/messages`, JSON.stringify(body), onReasoning, onContent, false, signal),
+  interviewReport: (id: string) =>
+    request<{ report: InterviewReport; text: string | null }>(`/ai/interview/sessions/${id}/report`),
+  interviewDeleteSession: (id: string) =>
+    request<{ ok: boolean }>(`/ai/interview/sessions/${id}`, { method: "DELETE" }),
+  interviewRenameSession: (id: string, title: string) =>
+    request<{ session: { id: string; title: string } }>(`/ai/interview/sessions/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify({ title }),
     }),
 
   // ---- 修改账本（分析 / 对话共用的撤销依据） ----

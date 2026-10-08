@@ -3,6 +3,11 @@
 // - AI 产出的修改建议经 services/resume-edit.ts 权威校验后下发给前端
 // - 统一修订账本（AiRevision）：对话侧与分析侧共用的撤销依据
 // 设计约束：本模块不提供任何「直接改简历字段」的接口，写入永远由前端 applyEdit 完成。
+//
+// 与模拟面试的边界（两者共用 AiChatSession / AiChatMessage，靠 mode 字段区分）：
+// - 本模块只认 mode === "chat"：列表过滤 + 每处会话校验都要带 mode，否则面试会话会串进对话列表。
+// - 例外是 /ai/chat/messages/:id/edits/:index/applied —— 面试产出的 edits 也要能标记已应用，
+//   该路由刻意不校验 mode（两边共用）。
 
 import type { FastifyInstance } from "fastify";
 import type { PrismaClient } from "@prisma/client";
@@ -361,6 +366,9 @@ export async function aiChatModule(app: FastifyInstance) {
         resumeId,
         userId: request.userId,
         archived: archived === "true",
+        // 面试会话（mode=interview）走 /ai/interview/*，绝不能混进对话列表。
+        // 两边共用 AiChatSession 表，靠 mode 区分——这个过滤条件漏了就会串。
+        mode: "chat",
       },
       orderBy: { lastMessageAt: "desc" },
       include: SESSION_WITH_LAST_MESSAGE,
@@ -424,7 +432,8 @@ export async function aiChatModule(app: FastifyInstance) {
     if (!request.userId) return reply.code(401).send({ error: "未登录" });
     const { id } = request.params as { id: string };
     const session = await prisma.aiChatSession.findUnique({ where: { id } });
-    if (!session || session.userId !== request.userId) return reply.code(404).send({ error: "对话不存在" });
+    if (!session || session.userId !== request.userId || session.mode !== "chat")
+      return reply.code(404).send({ error: "对话不存在" });
 
     const [rows, resume, full] = await Promise.all([
       prisma.aiChatMessage.findMany({
@@ -451,7 +460,8 @@ export async function aiChatModule(app: FastifyInstance) {
     const { id } = request.params as { id: string };
     const { before, limit } = request.query as { before?: string; limit?: string };
     const session = await prisma.aiChatSession.findUnique({ where: { id } });
-    if (!session || session.userId !== request.userId) return reply.code(404).send({ error: "对话不存在" });
+    if (!session || session.userId !== request.userId || session.mode !== "chat")
+      return reply.code(404).send({ error: "对话不存在" });
 
     const take = Math.min(Math.max(Number(limit) || 30, 1), 100);
     let beforeDate: Date | undefined;
@@ -481,7 +491,8 @@ export async function aiChatModule(app: FastifyInstance) {
       archived?: boolean;
     };
     const session = await prisma.aiChatSession.findUnique({ where: { id } });
-    if (!session || session.userId !== request.userId) return reply.code(404).send({ error: "对话不存在" });
+    if (!session || session.userId !== request.userId || session.mode !== "chat")
+      return reply.code(404).send({ error: "对话不存在" });
 
     const data: Record<string, unknown> = {};
     if (typeof body.title === "string" && body.title.trim()) data.title = body.title.trim().slice(0, 60);
@@ -507,7 +518,8 @@ export async function aiChatModule(app: FastifyInstance) {
     if (!request.userId) return reply.code(401).send({ error: "未登录" });
     const { id } = request.params as { id: string };
     const session = await prisma.aiChatSession.findUnique({ where: { id } });
-    if (!session || session.userId !== request.userId) return reply.code(404).send({ error: "对话不存在" });
+    if (!session || session.userId !== request.userId || session.mode !== "chat")
+      return reply.code(404).send({ error: "对话不存在" });
     await prisma.aiChatSession.delete({ where: { id } });
     return { ok: true };
   });
@@ -523,7 +535,8 @@ export async function aiChatModule(app: FastifyInstance) {
     if (!userText) return reply.code(400).send({ error: "消息内容不能为空" });
 
     const session = await prisma.aiChatSession.findUnique({ where: { id } });
-    if (!session || session.userId !== request.userId) return reply.code(404).send({ error: "对话不存在" });
+    if (!session || session.userId !== request.userId || session.mode !== "chat")
+      return reply.code(404).send({ error: "对话不存在" });
 
     const resume = await prisma.resume.findFirst({ where: { id: session.resumeId, userId: request.userId } });
     if (!resume) return reply.code(404).send({ error: "简历不存在" });

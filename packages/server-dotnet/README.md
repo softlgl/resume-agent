@@ -27,6 +27,7 @@ cd packages/server-dotnet/ResumeAgent.Api && dotnet run
 | `modules/ai/analyze.ts` | `Endpoints/Ai/AiAnalyzeEndpoints.cs` + `Services/Analysis/` | 硬规则 + LLM 分析、归一化/防编造过滤、缓存、SSE |
 | `modules/ai/config.ts` | `Endpoints/Ai/AiConfigEndpoints.cs` | 多模型 Profile 的增删改选与内存快照 |
 | `modules/ai/chat.ts` | `Endpoints/Ai/AiChatEndpoints.cs` | AI 对话、修改建议校验与修改账本 |
+| `modules/ai/interview.ts` | `Endpoints/Ai/AiInterviewEndpoints.cs` + `Services/Ai/InterviewHistory.cs`、`Services/Ai/InterviewPrompts.cs` | 模拟面试：计划 / 判定 / 追问 / 报告（契约见 `Contracts/AiInterviewContracts.cs`） |
 | `modules/ai/import.ts` | `Endpoints/Ai/ImportEndpoints.cs` + `Services/Import/` | docx/pdf 抽取、OCR、脱敏、结构化 |
 | `modules/export.ts` | `Endpoints/ExportEndpoints.cs` + `Services/Export/` | DOCX（OpenXml）+ PDF（QuestPDF） |
 | `modules/ai/core/*` | `Services/Llm/` + `Services/Ai/` | 同构共享层：`llm`↔`Services/Llm/`、`prompts`/`schemas`/`history`/`call-log`↔`Services/Ai/`（`ChatService` + `RawOpenAiStream` 统一自建请求体，`LlmThinking` 按 provider 注入非标准参数 `enable_thinking` / `thinking.type` / `think` / `chat_template_kwargs` / `reasoning_effort`） |

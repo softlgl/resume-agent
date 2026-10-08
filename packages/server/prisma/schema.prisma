@@ -65,6 +65,9 @@ model AiChatSession {
   title         String   @default("新对话")
   focus         String?  @db.Text // JSON string：焦点字段路径数组
   jd            String?  @db.Text // 本会话的 JD 定向文本
+  // 会话用途：chat=改简历对话 | interview=模拟面试（两套 prompt/schema/历史策略，见 modules/ai/interview.ts）
+  mode          String   @default("chat")
+  targetRole    String?  @db.Text // 面试岗位（仅 mode=interview），缺省从 basic.title 推
   archived      Boolean  @default(false)
   lastMessageAt DateTime @default(now())
   createdAt     DateTime @default(now())
@@ -83,6 +86,9 @@ model AiChatMessage {
   content        String   @db.Text
   edits          Json? // ResumeEdit[]，仅 assistant 消息有
   appliedIndexes Json? // number[]：已应用的 edit 下标
+  // 面试回合元数据 InterviewTurnMeta（仅 mode=interview 会话）；
+  // 追问链要按 questionId 直读原始行、不能用 getHistoryForLLM 截断，依据就在这里
+  meta           Json?
   reasoning      String?  @db.Text
   createdAt      DateTime @default(now())
 

@@ -106,6 +106,8 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
             e.Property(x => x.Title).HasColumnName("title").HasMaxLength(128);
             e.Property(x => x.Focus).HasColumnName("focus").HasColumnType("text");
             e.Property(x => x.Jd).HasColumnName("jd").HasColumnType("text");
+            e.Property(x => x.Mode).HasColumnName("mode").HasMaxLength(16);
+            e.Property(x => x.TargetRole).HasColumnName("targetRole").HasColumnType("text");
             e.Property(x => x.Archived).HasColumnName("archived");
             e.Property(x => x.LastMessageAt).HasColumnName("lastMessageAt").HasColumnType("datetime(3)");
             e.Property(x => x.CreatedAt).HasColumnName("createdAt").HasColumnType("datetime(3)");
@@ -122,6 +124,7 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
             e.Property(x => x.Content).HasColumnName("content").HasColumnType("text");
             e.Property(x => x.Edits).HasColumnName("edits").HasColumnType("json");
             e.Property(x => x.AppliedIndexes).HasColumnName("appliedIndexes").HasColumnType("json");
+            e.Property(x => x.Meta).HasColumnName("meta").HasColumnType("json");
             e.Property(x => x.Reasoning).HasColumnName("reasoning").HasColumnType("text");
             e.Property(x => x.CreatedAt).HasColumnName("createdAt").HasColumnType("datetime(3)");
             e.HasIndex(x => new { x.SessionId, x.CreatedAt });

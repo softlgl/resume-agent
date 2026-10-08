@@ -17,6 +17,37 @@ public static class LlmCallKind
     public const string Analyze = "analyze";
     public const string Chat = "chat";
     public const string Import = "import";
+    public const string Interview = "interview";
+}
+
+/// <summary>AiChatSession.Mode：会话用途。两套 prompt/schema/历史策略，见 Endpoints/Ai/AiInterviewEndpoints.cs</summary>
+public static class SessionMode
+{
+    public const string Chat = "chat";
+    public const string Interview = "interview";
+}
+
+/// <summary>面试考察维度：真实性核验 / 技术深度</summary>
+public static class InterviewDimension
+{
+    public const string Authenticity = "authenticity";
+    public const string Depth = "depth";
+}
+
+/// <summary>真实性核验的判定结果</summary>
+public static class InterviewVerdict
+{
+    public const string Pass = "pass";
+    public const string Weak = "weak";
+    public const string Fail = "fail";
+}
+
+/// <summary>用户对面试节奏的控制动作</summary>
+public static class InterviewAction
+{
+    public const string Answer = "answer"; // 回答当前题 → 判定后追问或收尾
+    public const string Next = "next";     // 跳过当前题 → 直接开新题
+    public const string Finish = "finish"; // 结束面试 → 出报告
 }
 
 /// <summary>AiRevision.Source：修订来自对话侧还是分析侧</summary>

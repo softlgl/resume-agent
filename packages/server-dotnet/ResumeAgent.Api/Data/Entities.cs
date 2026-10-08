@@ -62,6 +62,8 @@ public class AiChatSession
     public string Title { get; set; } = "新对话";
     public string? Focus { get; set; }         // JSON 字符串：焦点字段路径数组
     public string? Jd { get; set; }            // 本会话的 JD 定向文本
+    public string Mode { get; set; } = "chat"; // 会话用途：chat=改简历对话 | interview=模拟面试
+    public string? TargetRole { get; set; }    // 面试岗位（仅 mode=interview）
     public bool Archived { get; set; }
     public DateTime LastMessageAt { get; set; }
     public DateTime CreatedAt { get; set; }
@@ -76,6 +78,7 @@ public class AiChatMessage
     public string Content { get; set; } = "";
     public string? Edits { get; set; }             // JSON 列：ResumeEdit[]，仅 assistant 消息有
     public string? AppliedIndexes { get; set; }    // JSON 列：number[]：已应用的 edit 下标
+    public string? Meta { get; set; }              // JSON 列：面试回合元数据（InterviewTurnMeta），仅 mode=interview 会话
     public string? Reasoning { get; set; }
     public DateTime CreatedAt { get; set; }
 }

@@ -6,7 +6,7 @@ import Preview from "../components/Preview";
 import TemplatePicker from "../components/TemplatePicker";
 import SectionForm from "../components/SectionForm";
 import ResumeSwitcher from "../components/ResumeSwitcher";
-import AIAnalysisPanel from "../components/ai/AIAnalysisPanel";
+import AIAssistantPanel from "../components/ai/AIAssistantPanel";
 import ModelManager from "../components/ai/ModelManager";
 import { FileDown, Save, Check, LogOut, LayoutTemplate, Sparkles, Settings, X } from "lucide-react";
 import type { WorkExp, EduExp, ProjectExp, SkillGroup, AiRevisionRecord, EditSection, ResumeEdit } from "@resume-agent/shared";
@@ -499,7 +499,7 @@ export default function Editor() {
               onClick={() => setAiPanelOpen(true)}
               className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-gradient-to-r from-brand-600 to-purple-600 text-white text-sm hover:opacity-90 transition"
             >
-              <Sparkles size={15} /> AI 分析
+              <Sparkles size={15} /> AI 助手
             </button>
             <button
               onClick={() => setModelModalOpen(true)}
@@ -722,7 +722,7 @@ export default function Editor() {
         </section>
       </div>
 
-      <AIAnalysisPanel
+      <AIAssistantPanel
         open={aiPanelOpen}
         onClose={() => setAiPanelOpen(false)}
         content={content}

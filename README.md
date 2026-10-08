@@ -24,6 +24,7 @@
 - **多模型配置**：设置面板内可维护多套模型配置（Profile：供应商 / API Key / Base URL / 模型 / 上下文与输出上限 / **思考开关**），随时新增、修改、删除并切换激活；配置落库持久化，清空后自动回退到 `.env`。思考开关支持三态：`follow`（跟随模型默认）/ `on`（强制开启思考）/ `off`（强制关闭思考），按供应商注入各自的非标准参数（`enable_thinking` / `thinking.type` / `think` / `chat_template_kwargs` / `reasoning_effort`），`lmstudio` 因无可靠参数会静默忽略。
 - **AI 问答改简历**：在 AI 面板的「对话」tab 里针对当前简历提问，AI 给出可应用的修改建议——**单字段改写**（词级差异对比后一键替换）与**新增整条经历**（工作 / 教育 / 项目 / 技能）。新增经历会先给出半成品草稿卡片，缺的必填项 AI 会追问、你补齐后应用。AI 只给建议，是否写入由你点「应用」决定；应用后可随时**撤销**（只能撤销最新一条，避免依赖错乱）。多会话可切换、重命名、归档、分页回看历史，支持显式「焦点区块」与结合 JD 提问。
 - **导入 Word/PDF**：支持导入 `.docx` / `.pdf` 简历，自动提取文本并经 LLM 识别为可编辑的结构化字段，预览逐字段确认后另存为新简历；文字型 PDF 直接抽文本，扫描版（图片型 PDF）自动走本地 RapidOCR 识别。
+- **模拟面试**：在 AI 面板的「模拟面试」tab 里针对当前简历开一场面试。面试官只问**两个维度**——**真实性核验**（这条经历是不是你本人真做的，追问到第 3 层颗粒度）与**技术深度**（原理 / 边界 / 权衡）；**两个维度由服务端强制交替**，不会整场只问一个。每道题从简历的具体条目（`works[0]`、`projects[1]`…）里长出来，逐层加压到第 3 层自动换题，已问过的题会压成摘要避免重复。判定必须给出**可核对的依据**：「你原话里的这一句」配「为什么得出这个判定」，你拿原话就能核对，而不是只能读模型的评价。分数**逐轮记录并展示轨迹**（如 `1轮 60 → 2轮 75 → 3轮 85`），你能看到自己哪一轮开始慌了，而不是只拿到一个最终分。面试中你说出的、简历上没写的细节会作为修改建议卡片，**你点「应用」才写进简历**（绝不自动回写）。结束时给出两维度均分与总结报告，逐题依据与分数轨迹可展开回看。
 
 ## 技术栈
 
@@ -53,7 +54,7 @@ resume-agent/
 │  │  │  ├─ index.ts          # 应用入口（CORS / 插件 / 路由注册）
 │  │  │  ├─ plugins/          # prisma.ts（数据库）、auth.ts（JWT 校验钩子）
 │  │  │  ├─ modules/          # auth.ts、resume.ts、export.ts 路由
-│  │  │  │  └─ ai/            # AI 域：analyze / config / chat / import / structurize + index.ts
+│  │  │  │  └─ ai/            # AI 域：analyze / config / chat / interview / import / structurize + index.ts
 │  │  │  │     └─ core/       # llm / call-log / history / prompts / schemas（Node 与 .NET 同构的共享实现）
 │  │  │  ├─ services/         # extract.ts、ocripy.ts、redact.ts、
 │  │  │  │                    # resume-edit.ts（AI 修改的服务端权威校验层）
@@ -67,13 +68,13 @@ resume-agent/
 │        ├─ pages/            # Login.tsx、Editor.tsx
 │        ├─ components/       # Preview、SectionForm、TemplatePicker、ResumeSwitcher、
 │        │                    # NewResumeDialog、RevisionHistory（修改账本与撤销）
-│        │  └─ ai/            # AI 域组件：AIAnalysisPanel、ModelManager、
-│        │                    # ChatPanel（AI 对话）、ChatSessionPicker、EditCard（修改建议卡片）、
-│        │                    # ImportResumeDialog（导入识别）
+│        │  └─ ai/            # AI 域组件：AIAssistantPanel（分析 / 对话 / 面试三 tab）、ModelManager、
+│        │                    # ChatPanel（AI 对话）、InterviewPanel（模拟面试）、ChatSessionPicker、
+│        │                    # EditCard（修改建议卡片）、ImportResumeDialog（导入识别）
 │        ├─ utils/            # diff.ts（词级差异）、markdownLite.tsx、fieldLabel.ts
 │        ├─ api/client.ts     # 统一请求封装（自动携带 Bearer Token）
 │        └─ store/resume.ts   # Zustand 状态
-├─ start.bat / stop.bat       # Windows 一键启动 / 停止
+├─ start.bat / start-dotnet.bat / stop.bat    # Windows 一键启动（Node / .NET）/ 停止
 └─ package.json               # npm workspaces 根配置
 ```
 
@@ -220,6 +221,26 @@ npm run start --workspace=@resume-agent/server  # 运行编译后的后端
 
 > AI 修改建议在服务端由 `services/resume-edit.ts` 统一归一化与校验：拦截路径注入、下标越界、容器覆写、姓名改写、AI 编造事实字段（时间 / 链接 / 联系方式等）；月份类字段统一收敛为 `YYYY-MM`，`至今` 改用 `works[].current` 布尔表示。
 
+### 模拟面试
+
+与对话共用 `AiChatSession` / `AiChatMessage` 两张表，靠 `mode` 区分（`chat` | `interview`）。回合元数据存在 `AiChatMessage.meta`（JSON 列），`sessionId` 路由 `/ai/interview/*`，因此登录态校验与 Vite 代理前缀都无需额外改动。
+
+| 方法 | 路径 | 说明 |
+| --- | --- | --- |
+| GET | `/ai/interview/sessions` | 面试会话列表，query：`resumeId`（必填），只返回 `mode=interview` |
+| POST | `/ai/interview/sessions` | 新建面试并流式产出**面试计划 + 第一题**，**SSE**；body：`{ resumeId, targetRole?, questionCount? }`（`targetRole` 缺省取 `basic.title`；`questionCount` 用户指定题数，缺省用面试官建议，上限 12） |
+| GET | `/ai/interview/sessions/:id` | 会话详情：全部消息，每条带 `meta`（`questionId` / `probeDepth` / `verdict` / `quotes` + `reasons`…） |
+| PATCH | `/ai/interview/sessions/:id` | 重命名，body：`{ title }` |
+| DELETE | `/ai/interview/sessions/:id` | 删除会话及其消息 |
+| GET | `/ai/interview/sessions/:id/report` | 面试报告：两维度均分（**服务端本地聚合，模型不参与打分**）、逐题汇总、总结正文 |
+| POST | `/ai/interview/sessions/:id/messages` | 发消息，**SSE**；body：`{ action, content? }`，`action` 为 `answer`（回答，判定后追问或收尾）、`next`（换题）、`finish`（出报告）。`answer` 判定为收尾时会连发两条消息，此时 `result` 里带 `message`（收尾）与 `message2`（新题）；若已达 `questionCount` 设定的题数（收尾且已开题数达标），则不再自动开新题，`result` 只带 `message` 与 `planReached: { planTotal, askedCount }`，由用户点「换一题」继续深挖或点「结束面试」出报告 |
+
+与对话链路的**三处刻意差异**（改动前务必先读 `packages/server/src/modules/ai/interview.ts` 的文件头）：
+
+1. **简历不每轮全量发**：追问只发 `meta.target` 指向的那一条，只有开新题才给全量。
+2. **历史不走 `core/history.ts` 的 A 视图**：面试按 `questionId` 分组——当前追问链逐字保留（上限放宽到 6000 字，2000 字会截掉口述回答里的关键细节），已结束的题压成一行摘要。这正是 `history.ts` 顶部「注释 C 读取」所说的那件事。
+3. **一条消息只归属一道题**：模型不能同时「收尾旧题」和「开出新题」，否则 `questionId` 分组断裂、报告算分会错。因此收尾与开新题强制拆成两次 LLM 调用。
+
 ## 模板一览
 
 | ID | 名称 | 布局 | 适用场景 |
@@ -254,6 +275,9 @@ npm run start --workspace=@resume-agent/server  # 运行编译后的后端
 
 **导出的 PDF 中文乱码**
 降级路径依赖系统字体 `STSONG.TTF`（华文宋体），请确认该字体存在，或更换 `packages/server/src/export/pdf.ts` 中的 `FONT_PATH`。
+
+**看不到模拟面试的流程日志**
+面试模块内置关键节点日志（前缀 `[AI-INTERVIEW]`：建计划 / 判定结果 / 是否继续追问 / 开新题 / 计划达成）。默认开启；环境变量 `AI_DEBUG=0` 关闭，`AI_DEBUG=2` 追加更细字段。注意 `start.bat` / `start-dotnet.bat` 会把后端输出重定向到 `server.out.log` / `server-dotnet.out.log`，窗口内是空白的，可执行 `Get-Content server.out.log -Wait -Tail 50` 实时跟踪。
 
 ## 许可证
 

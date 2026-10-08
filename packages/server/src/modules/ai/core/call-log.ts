@@ -9,7 +9,7 @@ export async function recordCall(
   prisma: PrismaClient,
   userId: string,
   result: { reasoning?: string | null; output?: string | null },
-  opts: { kind?: "analyze" | "import" | "chat"; resumeId?: string | null } = {}
+  opts: { kind?: "analyze" | "import" | "chat" | "interview"; resumeId?: string | null } = {}
 ) {
   try {
     const cfg = getDefaultConfig();

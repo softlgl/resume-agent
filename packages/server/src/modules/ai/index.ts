@@ -6,6 +6,7 @@ import type { FastifyInstance } from "fastify";
 import { aiAnalyzeModule } from "./analyze.js";
 import { aiConfigModule, syncProfiles } from "./config.js";
 import { aiChatModule } from "./chat.js";
+import { aiInterviewModule } from "./interview.js";
 import { importModule } from "./import.js";
 
 export async function aiModule(app: FastifyInstance) {
@@ -16,5 +17,6 @@ export async function aiModule(app: FastifyInstance) {
   await app.register(aiAnalyzeModule);
   await app.register(aiConfigModule);
   await app.register(aiChatModule);
+  await app.register(aiInterviewModule);
   await app.register(importModule);
 }

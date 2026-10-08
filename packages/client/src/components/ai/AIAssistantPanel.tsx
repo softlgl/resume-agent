@@ -1,8 +1,9 @@
-import { useState, useEffect, useCallback } from "react";
-import { Sparkles, X, AlertTriangle, AlertCircle, Lightbulb, TrendingUp, Brain, RefreshCw, Settings, Check, CornerDownRight, Braces, MessagesSquare, ScanSearch, Wand2, RotateCcw } from "lucide-react";
+﻿import { useState, useEffect, useCallback } from "react";
+import { Sparkles, X, AlertTriangle, AlertCircle, Lightbulb, TrendingUp, Brain, RefreshCw, Settings, Check, CornerDownRight, Braces, MessagesSquare, ScanSearch, Wand2, RotateCcw, Mic } from "lucide-react";
 import { api } from "../../api/client";
 import ModelManager from "./ModelManager";
 import ChatPanel from "./ChatPanel";
+import InterviewPanel from "./InterviewPanel";
 import RevisionHistory from "../RevisionHistory";
 import type { ApplyResult } from "./EditCard";
 import { fieldToLabel } from "../../utils/fieldLabel";
@@ -413,7 +414,7 @@ function RadarChart({ data }: { data: AbilityProfile }) {
   );
 }
 
-export default function AIAnalysisPanel({
+export default function AIAssistantPanel({
   open,
   onClose,
   content,
@@ -438,7 +439,7 @@ export default function AIAnalysisPanel({
   const [settingsOpen, setSettingsOpen] = useState(false);
 
   // 分析 / 对话 双层视图（不放进 runAnalyze 的依赖，切 tab 不会重跑分析）
-  const [tab, setTab] = useState<"analysis" | "chat">("analysis");
+  const [tab, setTab] = useState<"analysis" | "chat" | "interview">("analysis");
   // 对话焦点（从分析面板带过去，聊天侧可增删）
   const [focus, setFocus] = useState<string[]>([]);
   // 「问问 AI」预填进输入框的内容
@@ -635,6 +636,16 @@ export default function AIAnalysisPanel({
               }`}
             >
               <MessagesSquare size={13} /> 简历对话
+            </button>
+            <button
+              onClick={() => setTab("interview")}
+              className={`inline-flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-t-lg border-b-2 transition ${
+                tab === "interview"
+                  ? "border-brand-600 text-brand-700 font-medium bg-brand-50/50"
+                  : "border-transparent text-slate-500 hover:text-slate-700"
+              }`}
+            >
+              <Mic size={13} /> 模拟面试
             </button>
           </div>
 
@@ -890,6 +901,18 @@ export default function AIAnalysisPanel({
             onFocusChange={setFocus}
             presetPrompt={presetPrompt}
             onConsumePresetPrompt={() => setPresetPrompt(null)}
+            onApplyEdit={onApplyEdit}
+            onRevertRevision={onRevert}
+            onRefreshRevisions={onRefreshRevisions}
+            onGoto={onGoto ?? (() => {})}
+          />
+        </div>
+
+        {/* 内容区：模拟面试（常驻挂载，切 tab 只隐藏，保持会话与流式状态） */}
+        <div className={tab === "interview" ? "flex-1 min-h-0" : "hidden"}>
+          <InterviewPanel
+            open={tab === "interview"}
+            resumeId={resumeId}
             onApplyEdit={onApplyEdit}
             onRevertRevision={onRevert}
             onRefreshRevisions={onRefreshRevisions}

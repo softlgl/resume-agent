@@ -464,7 +464,10 @@ public static class AiChatEndpoints
 
             var wantArchived = archived == "true";
             var sessions = await db.AiChatSessions.AsNoTracking()
-                .Where(s => s.ResumeId == resumeId && s.UserId == userId && s.Archived == wantArchived)
+                // 面试会话（Mode=interview）走 /ai/interview/*，绝不能混进对话列表。
+                // 两边共用 AiChatSession 表，靠 Mode 区分——这个过滤条件漏了就会串。
+                .Where(s => s.ResumeId == resumeId && s.UserId == userId && s.Archived == wantArchived
+                            && s.Mode == SessionMode.Chat)
                 .OrderByDescending(s => s.LastMessageAt)
                 .ToListAsync();
 
@@ -511,6 +514,8 @@ public static class AiChatEndpoints
                 Title = title[..Math.Min(60, title.Length)],
                 Focus = focus.Count > 0 ? JsonSerializer.Serialize(focus, NodeJsonOptions) : null,
                 Jd = jd.Length > 0 ? jd : null,
+                // 显式写明：默认值只在 DB 侧生效，面试会话（mode=interview）不能混进对话列表
+                Mode = SessionMode.Chat,
                 LastMessageAt = DateTime.Now,
             };
             db.AiChatSessions.Add(session);
@@ -550,7 +555,8 @@ public static class AiChatEndpoints
             var userId = principal.UserId();
             if (userId is null) return Error("未登录", 401);
             var session = await db.AiChatSessions.AsNoTracking().FirstOrDefaultAsync(s => s.Id == id);
-            if (session is null || session.UserId != userId) return Error("对话不存在", 404);
+            if (session is null || session.UserId != userId || session.Mode != SessionMode.Chat)
+                return Error("对话不存在", 404);
 
             var rows = await db.AiChatMessages.AsNoTracking()
                 .Where(m => m.SessionId == id)
@@ -583,7 +589,8 @@ public static class AiChatEndpoints
             var userId = principal.UserId();
             if (userId is null) return Error("未登录", 401);
             var session = await db.AiChatSessions.AsNoTracking().FirstOrDefaultAsync(s => s.Id == id);
-            if (session is null || session.UserId != userId) return Error("对话不存在", 404);
+            if (session is null || session.UserId != userId || session.Mode != SessionMode.Chat)
+                return Error("对话不存在", 404);
 
             var query = http.Request.Query;
             var before = query["before"].ToString();
@@ -612,7 +619,8 @@ public static class AiChatEndpoints
             var userId = principal.UserId();
             if (userId is null) return Error("未登录", 401);
             var session = await db.AiChatSessions.FirstOrDefaultAsync(s => s.Id == id);
-            if (session is null || session.UserId != userId) return Error("对话不存在", 404);
+            if (session is null || session.UserId != userId || session.Mode != SessionMode.Chat)
+                return Error("对话不存在", 404);
 
             var title = body.Title ?? "";
             if (title.Trim().Length > 0)
@@ -652,7 +660,8 @@ public static class AiChatEndpoints
             var userId = principal.UserId();
             if (userId is null) return Error("未登录", 401);
             var session = await db.AiChatSessions.AsNoTracking().FirstOrDefaultAsync(s => s.Id == id);
-            if (session is null || session.UserId != userId) return Error("对话不存在", 404);
+            if (session is null || session.UserId != userId || session.Mode != SessionMode.Chat)
+                return Error("对话不存在", 404);
             // 消息由 AiChatMessage_sessionId_fkey（Prisma 建表时定义，ON DELETE CASCADE）自动级联删除
             await db.AiChatSessions.Where(s => s.Id == id).ExecuteDeleteAsync();
             return Results.Json(new { ok = true });
@@ -671,7 +680,8 @@ public static class AiChatEndpoints
             if (userText.Length == 0) return Error("消息内容不能为空", 400);
 
             var session = await db.AiChatSessions.AsNoTracking().FirstOrDefaultAsync(s => s.Id == id);
-            if (session is null || session.UserId != userId) return Error("对话不存在", 404);
+            if (session is null || session.UserId != userId || session.Mode != SessionMode.Chat)
+                return Error("对话不存在", 404);
 
             var resume = await db.Resumes.AsNoTracking()
                 .FirstOrDefaultAsync(r => r.Id == session.ResumeId && r.UserId == userId);
